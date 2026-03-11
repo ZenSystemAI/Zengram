@@ -11,6 +11,12 @@ import { initStore } from './services/stores/interface.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 
+// Validate required environment variables
+if (!process.env.BRAIN_API_KEY) {
+  console.error('[shared-brain] FATAL: BRAIN_API_KEY is required. Set it in .env or environment.');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 8084;
 const HOST = process.env.HOST || '127.0.0.1';

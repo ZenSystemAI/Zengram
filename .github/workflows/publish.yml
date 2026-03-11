@@ -24,7 +24,7 @@ jobs:
         run: cd api && npm install
 
       - name: Run tests
-        run: cd api && node --test tests/**/*.test.js
+        run: cd api && npm test
 
       - name: Install MCP server dependencies
         run: cd mcp-server && npm install
