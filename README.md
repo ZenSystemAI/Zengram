@@ -113,6 +113,13 @@ They **cannot**:
 
 This is by design. Autonomous agents like OpenClaw run unattended on separate machines. If one hallucinates or goes off-script, the worst it can do is store bad data — it can't destroy good data. Compare that to systems where the agent has direct SQLite access on the same machine: one bad command and your memory is gone.
 
+### Security
+
+- **Timing-safe authentication** — API key comparison uses `crypto.timingSafeEqual()` to prevent timing attacks
+- **Rate limiting** — Failed authentication attempts are rate-limited per IP (10 failures/minute before lockout)
+- **Startup validation** — The API refuses to start without required environment variables configured
+- **Credential scrubbing** — All stored content is scrubbed for API keys, tokens, passwords, and secrets before storage
+
 ### Session Briefings
 
 Start every session by asking "what happened since I was last here?" The briefing endpoint returns categorized updates from all other agents, excluding the requesting agent's own entries. No more context loss between sessions.
@@ -141,6 +148,7 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 | Memory decay / confidence scoring | **Yes** | No | No | No |
 | Content deduplication | **Hash-based** | LLM-based | No | No |
 | Credential scrubbing | **Yes** | No | No | No |
+| Timing-safe auth + rate limiting | **Yes** | No | No | No |
 | Session briefings | **Yes** | No | No | No |
 | Pluggable embeddings | OpenAI, Ollama | Multiple | Local ONNX | No |
 | Pluggable storage backends | SQLite, Postgres, Baserow | Multiple vector DBs | SQLite, Cloudflare | File |
@@ -497,10 +505,11 @@ node src/index.js
 
 ### Production Checklist
 
-- Set a strong, unique `BRAIN_API_KEY`
+- Set a strong, unique `BRAIN_API_KEY` (rate limiting protects against brute force)
 - Run Qdrant with authentication enabled (`QDRANT_API_KEY`)
 - Use PostgreSQL instead of SQLite for structured storage
 - Place the API behind a reverse proxy (nginx/Caddy) with TLS
+- Bind to `127.0.0.1` (default) or a specific LAN IP — not `0.0.0.0` in production
 - Set `CONSOLIDATION_MODEL` to match your budget/quality needs
 - Monitor `/health` and `/stats` endpoints
 
