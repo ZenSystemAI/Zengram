@@ -18,6 +18,9 @@
     <img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue.svg" />
     <img alt="MCP" src="https://img.shields.io/badge/MCP-compatible-purple.svg" />
   </p>
+  <p align="center">
+    <img src=".github/hero.jpg" alt="Multi-Agent Memory — shared brain for AI agents" width="700" />
+  </p>
 </p>
 
 ---
