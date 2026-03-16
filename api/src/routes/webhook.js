@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { embed } from '../services/embedders/interface.js';
-import { upsertPoint, findByPayload } from '../services/qdrant.js';
+import { upsertPoint, findByPayload, updatePointPayload } from '../services/qdrant.js';
 import { createEvent, upsertStatus, isStoreAvailable, isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory } from '../services/stores/interface.js';
 import { scrubCredentials } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
@@ -50,13 +50,37 @@ webhookRouter.post('/n8n', async (req, res) => {
 
     const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 
-    // Dedup: if identical content already exists, return existing memory
+    // Dedup: if identical content already exists, check for corroboration
+    const sourceAgent = 'n8n';
     const duplicates = await findByPayload('content_hash', contentHash, { active: true });
     if (duplicates.length > 0) {
+      const existing = duplicates[0];
+      const existingObservedBy = existing.payload.observed_by || [existing.payload.source_agent];
+
+      if (existingObservedBy.includes(sourceAgent)) {
+        return res.status(200).json({
+          id: existing.id,
+          deduplicated: true,
+          observed_by: existingObservedBy,
+          observation_count: existingObservedBy.length,
+          message: 'Identical webhook event already exists — skipped',
+        });
+      }
+
+      // Different source → corroborate
+      const updatedObservedBy = [...existingObservedBy, sourceAgent];
+      await updatePointPayload(existing.id, {
+        observed_by: updatedObservedBy,
+        observation_count: updatedObservedBy.length,
+        last_observed_at: new Date().toISOString(),
+      });
+
       return res.status(200).json({
-        id: duplicates[0].id,
-        deduplicated: true,
-        message: 'Identical webhook event already exists — skipped',
+        id: existing.id,
+        corroborated: true,
+        observed_by: updatedObservedBy,
+        observation_count: updatedObservedBy.length,
+        message: `Cross-agent corroboration recorded — now observed by ${updatedObservedBy.length} agents`,
       });
     }
 
@@ -81,6 +105,8 @@ webhookRouter.post('/n8n', async (req, res) => {
       text: content,
       type: 'event',
       source_agent: 'n8n',
+      observed_by: ['n8n'],
+      observation_count: 1,
       client_id: client_id || 'global',
       category: 'episodic',
       importance: status === 'error' ? 'high' : 'medium',

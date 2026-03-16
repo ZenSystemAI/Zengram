@@ -41,12 +41,39 @@ memoryRouter.post('/', async (req, res) => {
     const duplicates = await findByPayload('content_hash', contentHash, { active: true });
     if (duplicates.length > 0) {
       const existing = duplicates[0];
+      const existingObservedBy = existing.payload.observed_by || [existing.payload.source_agent];
+
+      // Same agent → true dedup (skip)
+      if (existingObservedBy.includes(source_agent)) {
+        return res.status(200).json({
+          id: existing.id,
+          type: existing.payload.type,
+          content_hash: contentHash,
+          deduplicated: true,
+          observed_by: existingObservedBy,
+          observation_count: existingObservedBy.length,
+          message: 'Exact duplicate from same agent — returning existing memory',
+          stored_in: { qdrant: true, structured_db: true },
+        });
+      }
+
+      // Different agent → corroborate: record that another agent observed the same thing
+      const updatedObservedBy = [...existingObservedBy, source_agent];
+      const now = new Date().toISOString();
+      await updatePointPayload(existing.id, {
+        observed_by: updatedObservedBy,
+        observation_count: updatedObservedBy.length,
+        last_observed_at: now,
+      });
+
       return res.status(200).json({
         id: existing.id,
         type: existing.payload.type,
         content_hash: contentHash,
-        deduplicated: true,
-        message: 'Exact duplicate detected — returning existing memory',
+        corroborated: true,
+        observed_by: updatedObservedBy,
+        observation_count: updatedObservedBy.length,
+        message: `Cross-agent corroboration recorded — now observed by ${updatedObservedBy.length} agents`,
         stored_in: { qdrant: true, structured_db: true },
       });
     }
@@ -89,6 +116,8 @@ memoryRouter.post('/', async (req, res) => {
       text: cleanContent,
       type,
       source_agent,
+      observed_by: [source_agent],
+      observation_count: 1,
       client_id: client_id || 'global',
       category: category || 'episodic',
       importance: importance || 'medium',

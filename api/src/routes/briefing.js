@@ -84,7 +84,7 @@ briefingRouter.get('/', async (req, res) => {
       facts_updated: briefing.facts_updated.length,
       status_changes: briefing.status_changes.length,
       decisions: briefing.decisions.length,
-      agents_active: [...new Set(points.map(p => p.payload.source_agent))],
+      agents_active: [...new Set(points.flatMap(p => p.payload.observed_by || [p.payload.source_agent]))],
       clients_mentioned: [...new Set(points.map(p => p.payload.client_id).filter(c => c !== 'global'))],
       entities_mentioned: entitiesMentioned.slice(0, 20),
     };
