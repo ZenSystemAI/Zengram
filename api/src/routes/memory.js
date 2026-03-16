@@ -26,6 +26,13 @@ memoryRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
+    // Enforce agent identity: if authenticated with an agent key, source_agent must match
+    if (req.authenticatedAgent && source_agent !== req.authenticatedAgent) {
+      return res.status(403).json({
+        error: `Agent identity mismatch: authenticated as "${req.authenticatedAgent}" but source_agent is "${source_agent}"`,
+      });
+    }
+
     // Scrub credentials
     const cleanContent = scrubCredentials(content);
 
