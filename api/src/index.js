@@ -8,9 +8,11 @@ import { webhookRouter } from './routes/webhook.js';
 import { statsRouter } from './routes/stats.js';
 import { consolidationRouter } from './routes/consolidation.js';
 import { entitiesRouter } from './routes/entities.js';
+import { clientRouter } from './routes/client.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases } from './services/stores/interface.js';
+import { initClientResolver } from './services/client-resolver.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 import { loadAliasCache } from './services/entities.js';
@@ -49,6 +51,7 @@ app.use('/briefing', briefingRouter);
 app.use('/webhook', webhookRouter);
 app.use('/consolidate', consolidationRouter);
 app.use('/entities', entitiesRouter);
+app.use('/client', clientRouter);
 
 async function start() {
   try {
@@ -61,6 +64,9 @@ async function start() {
 
     // Initialize structured storage backend
     await initStore();
+
+    // Initialize client fingerprint resolver (Baserow → fuzzy matcher)
+    await initClientResolver();
 
     // Load entity alias cache for fast-path extraction
     if (isEntityStoreAvailable()) {
