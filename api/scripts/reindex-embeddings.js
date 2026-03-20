@@ -72,37 +72,27 @@ async function createCollection(dims) {
     }),
   });
 
-  // Recreate all payload indices
-  const keywordFields = ['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject'];
-  for (const field of keywordFields) {
-    await qdrantRequest(`/collections/${COLLECTION}/index`, {
-      method: 'PUT',
-      body: JSON.stringify({ field_name: field, field_schema: 'Keyword' }),
-    });
+  // Recreate all payload indices (best-effort — some may fail on older Qdrant versions)
+  const indexes = [
+    ...['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject']
+      .map(f => ({ field_name: f, field_schema: 'Keyword' })),
+    { field_name: 'active', field_schema: 'Bool' },
+    { field_name: 'confidence', field_schema: 'Float' },
+    { field_name: 'access_count', field_schema: 'Integer' },
+    { field_name: 'created_at', field_schema: 'Datetime' },
+    { field_name: 'last_accessed_at', field_schema: 'Datetime' },
+    { field_name: 'entities[].name', field_schema: 'keyword' },
+  ];
+  for (const idx of indexes) {
+    try {
+      await qdrantRequest(`/collections/${COLLECTION}/index`, {
+        method: 'PUT',
+        body: JSON.stringify(idx),
+      });
+    } catch (e) {
+      console.warn(`[reindex] Index ${idx.field_name} failed (non-blocking): ${e.message}`);
+    }
   }
-
-  await qdrantRequest(`/collections/${COLLECTION}/index`, {
-    method: 'PUT',
-    body: JSON.stringify({ field_name: 'active', field_schema: 'Bool' }),
-  });
-  await qdrantRequest(`/collections/${COLLECTION}/index`, {
-    method: 'PUT',
-    body: JSON.stringify({ field_name: 'confidence', field_schema: 'Float' }),
-  });
-  await qdrantRequest(`/collections/${COLLECTION}/index`, {
-    method: 'PUT',
-    body: JSON.stringify({ field_name: 'access_count', field_schema: 'Integer' }),
-  });
-  for (const field of ['created_at', 'last_accessed_at']) {
-    await qdrantRequest(`/collections/${COLLECTION}/index`, {
-      method: 'PUT',
-      body: JSON.stringify({ field_name: field, field_schema: { type: 'datetime', is_tenant: false } }),
-    });
-  }
-  await qdrantRequest(`/collections/${COLLECTION}/index`, {
-    method: 'PUT',
-    body: JSON.stringify({ field_name: 'entities[].name', field_schema: 'keyword' }),
-  });
 }
 
 async function upsertBatch(points) {
