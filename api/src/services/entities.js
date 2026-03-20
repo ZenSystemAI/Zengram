@@ -29,12 +29,39 @@ const DOMAIN_REGEX = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|ca|org
 const QUOTED_NAME_REGEX = /[""`]([^"""`]{3,60})[""`]/g;
 const CAPITALIZED_PHRASE_REGEX = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+)\b/g;
 
+// Known system/product names — these are NOT people
+const KNOWN_SYSTEMS = {
+  'agency system': 'Agency System', 'mission center': 'Mission Center',
+  'shared brain': 'Shared Brain', 'antigravity studio': 'Antigravity Studio',
+  'prism hub': 'Prism Hub', 'neo studio': 'Neo Studio',
+  'expert local': 'Expert Local', 'site settings': 'Site Settings',
+  'design director': 'Design Director', 'done gate': 'Done Gate',
+  'role cards': 'Role Cards', 'points tracker': 'Points Tracker',
+  'google fonts': 'Google Fonts', 'google maps': 'Google Maps',
+  'google ads': 'Google Ads', 'google search': 'Google Search',
+  'brand voice': 'Brand Voice', 'design system': 'Design System',
+};
+
 const SKIP_PHRASES = new Set([
   'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
   'January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December',
   'Error Trigger', 'Code Node', 'HTTP Request', 'The Problem',
   'What Was', 'How To', 'Set Up', 'Get Started',
+  // Common non-person phrases from session logs
+  'Card Foreground', 'Muted Foreground', 'Data Volume Threshold',
+  'Accessibility Grade', 'Quick Wins', 'Bug Fix', 'New Feature',
+  'Weekly Family', 'Morning Newsletter', 'Agent Fleet',
+  'Fixed Morpheus', 'Fixed Mission', 'Fixed Docker', 'Fixed Prism', 'Fixed Gemini',
+  'Added Gemini', 'Uses Node', 'Skills Merge', 'Inter Tight',
+  'Pulled Fireflies', 'Curated Unsplash', 'Runs Neo',
+  'Redesigned Neo', 'Infrastructure Morpheus', 'Workspace Explorer',
+  'Component Library', 'Converted Credit', 'Client Onboarding',
+  'Search Engine', 'Application Password', 'Niche Family',
+  'Implementation Notes', 'Master Boilerplate', 'Gathering Phase',
+  'Mandatory Scraping', 'Image Pipeline', 'Linter Skill',
+  'Approved Conversion', 'Demo Quality', 'Point System',
+  'Enhanced Done', 'Art Director', 'Website Build',
 ]);
 
 // In-memory alias cache: lowercase alias -> { entityId, canonicalName, entityType }
@@ -102,11 +129,17 @@ export function extractEntities(text, clientId, sourceAgent) {
   // 4. Known technology names (word-boundary)
   const lowerText = ` ${text.toLowerCase()} `;
   for (const [keyword, canonical] of Object.entries(KNOWN_TECH)) {
-    // Escape regex special chars and check word boundaries
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`\\b${escaped}\\b`, 'i');
     if (re.test(lowerText)) {
       add(canonical, 'technology', 'mentioned');
+    }
+  }
+
+  // 4b. Known system/product names
+  for (const [keyword, canonical] of Object.entries(KNOWN_SYSTEMS)) {
+    if (lowerText.includes(keyword)) {
+      add(canonical, 'system', 'mentioned');
     }
   }
 
@@ -126,10 +159,13 @@ export function extractEntities(text, clientId, sourceAgent) {
   while ((match = CAPITALIZED_PHRASE_REGEX.exec(text)) !== null) {
     const phrase = match[1].trim();
     if (SKIP_PHRASES.has(phrase)) continue;
-    // Skip if it's already caught by tech dictionary
+    // Skip if already caught by tech or systems dictionaries
     if (KNOWN_TECH[phrase.toLowerCase()]) continue;
+    if (KNOWN_SYSTEMS[phrase.toLowerCase()]) continue;
     const cached = aliasCache.get(phrase.toLowerCase());
-    add(cached?.canonicalName || phrase, cached?.entityType || 'person', 'mentioned');
+    // Default to "workflow" not "person" — most capitalized phrases in agent logs are
+    // system names, features, or concepts, not actual humans
+    add(cached?.canonicalName || phrase, cached?.entityType || 'workflow', 'mentioned');
   }
 
   return entities;

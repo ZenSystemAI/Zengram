@@ -97,6 +97,14 @@ memoryRouter.post('/', async (req, res) => {
 
     // --- Supersedes logic for facts and statuses ---
     let supersedesId = null;
+    let keyWarning = null;
+
+    // Facts without keys can't be superseded — they pile up forever.
+    // Log a warning so we can track and fix callers over time.
+    if (type === 'fact' && !req.body.key) {
+      keyWarning = 'Fact stored without key — cannot be superseded. Provide a key for long-term memory hygiene.';
+      console.warn(`[memory:store] ${keyWarning} agent=${source_agent} content="${cleanContent.slice(0, 60)}..."`);
+    }
 
     if (type === 'fact' && req.body.key) {
       // Find existing active fact with same key (targeted Qdrant query)
@@ -214,6 +222,7 @@ memoryRouter.post('/', async (req, res) => {
         qdrant: true,
         structured_db: !!storeResult,
       },
+      ...(keyWarning ? { warning: keyWarning } : {}),
     });
   } catch (err) {
     console.error('[memory:store] Error:', err.message);
@@ -256,19 +265,24 @@ memoryRouter.get('/search', async (req, res) => {
 
     const rawResults = await searchPoints(vector, filter, Math.min(parseInt(limit) || 10, 100), nestedFilters);
 
-    // Apply confidence decay and re-rank
+    // Apply confidence decay + access-weighted ranking
+    // Memories that get used more are more valuable — self-curating brain
     const COMPACT_MAX = 200;
     const results = rawResults.map(r => {
       const effectiveConfidence = computeEffectiveConfidence(r.payload);
       const p = r.payload;
 
+      // Access boost: log(access_count + 1) gives diminishing returns
+      // 0 accesses = 1.0x, 1 = 1.3x, 5 = 1.8x, 20 = 2.3x, 100 = 2.7x
+      const accessBoost = 1 + (0.3 * Math.log2((p.access_count || 0) + 1));
+      const effectiveScore = +(r.score * effectiveConfidence * accessBoost).toFixed(4);
+
       if (isCompact) {
-        // Compact: only essential fields, truncated content
         const text = p.text || '';
         return {
           id: r.id,
           score: +r.score.toFixed(4),
-          effective_score: +(r.score * effectiveConfidence).toFixed(4),
+          effective_score: effectiveScore,
           type: p.type,
           content: text.length > COMPACT_MAX ? text.slice(0, COMPACT_MAX) + '...' : text,
           source_agent: p.source_agent,
@@ -282,12 +296,12 @@ memoryRouter.get('/search', async (req, res) => {
         id: r.id,
         score: r.score,
         confidence: effectiveConfidence,
-        effective_score: +(r.score * effectiveConfidence).toFixed(4),
+        effective_score: effectiveScore,
         ...p,
       };
     });
 
-    // Re-sort by effective_score
+    // Re-sort by effective_score (now includes access weight)
     results.sort((a, b) => b.effective_score - a.effective_score);
 
     // Async: increment access_count and update last_accessed_at for returned results

@@ -42,13 +42,7 @@ Analyze the following memories and produce a JSON response with these fields:
       "relationship": "Description of how these memories are related"
     }
   ],
-  "insights": [
-    {
-      "content": "A pattern or insight noticed across multiple memories",
-      "source_memories": ["id1", "id2", "id3"],
-      "importance": "high|medium|low"
-    }
-  ],
+  "insights": [],
   "entities": [
     {
       "canonical_name": "The standard/official name for this entity",
@@ -63,7 +57,7 @@ Rules:
 - Only create merged_facts when 2+ memories say essentially the same thing
 - Only flag contradictions when memories genuinely conflict (not just different aspects)
 - Connections should be meaningful, not trivial (e.g., same client mentioned)
-- Insights must contain SPECIFIC, ACTIONABLE information not already captured in the source memories. Do NOT generate generic observations like "the system is working well", "there is ongoing commitment to efficiency", "the projects are closely intertwined", or "successful completion indicates effective management". If you have no genuinely novel insight, return an empty insights array.
+- insights: ALWAYS return an empty array. Do NOT generate insights — they create noise.
 - If no merges/contradictions/connections/insights found, return empty arrays
 - Preserve client_id from source memories
 - Extract ALL named entities: client names, people, systems, services, domains, technologies, workflows, agent names
@@ -291,7 +285,8 @@ async function consolidateBatch(points, clientId) {
         continue;
       }
 
-      await upsertPoint(crypto.randomUUID(), vector, {
+      const mergedId = crypto.randomUUID();
+      await upsertPoint(mergedId, vector, {
         text: content,
         type: 'fact',
         source_agent: 'consolidation-engine',
@@ -308,6 +303,21 @@ async function consolidateBatch(points, clientId) {
         consolidated: true,
         metadata: { source_memories: fact.source_memories, consolidation_type: 'merged' },
       });
+
+      // Supersede source memories — the merged fact replaces them
+      if (fact.source_memories?.length > 0) {
+        for (const sourceId of fact.source_memories) {
+          try {
+            await updatePointPayload(sourceId, {
+              active: false,
+              superseded_by: mergedId,
+              superseded_at: now,
+            });
+          } catch (e) {
+            // Source memory might not exist — skip
+          }
+        }
+      }
       merged++;
     }
   }
@@ -358,46 +368,12 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Store insights as new memories (with dedup)
+  // Insights DISABLED (2026-03-19): LLM-generated insights about memory content
+  // are a noise factory. They produce generic observations that compete with source
+  // memories in search results. Real insights come from agents doing actual work.
+  // The consolidation engine should merge, connect, and extract entities — not philosophize.
   if (result.insights?.length > 0) {
-    for (const insight of result.insights) {
-      const content = insight.content;
-      const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
-
-      // Exact dedup: skip if identical content already exists
-      const existing = await findByPayload('content_hash', contentHash, { active: true });
-      if (existing.length > 0) {
-        skipped++;
-        continue;
-      }
-
-      const vector = await embed(content);
-
-      // Semantic dedup: skip if a very similar memory already exists
-      const similar = await searchPoints(vector, { active: true }, 1);
-      if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) {
-        skipped++;
-        continue;
-      }
-
-      await upsertPoint(crypto.randomUUID(), vector, {
-        text: content,
-        type: 'fact',
-        source_agent: 'consolidation-engine',
-        client_id: clientId,
-        category: 'semantic',
-        importance: sanitizeImportance(insight.importance),
-        content_hash: contentHash,
-        created_at: now,
-        last_accessed_at: now,
-        access_count: 0,
-        confidence: 0.8, // Insights start at slightly lower confidence
-        active: true,
-        consolidated: true,
-        metadata: { source_memories: insight.source_memories, consolidation_type: 'insight' },
-      });
-      insights++;
-    }
+    console.log(`[consolidation] Skipped ${result.insights.length} insights (generation disabled)`);
   }
 
   // Process entities discovered by the LLM
