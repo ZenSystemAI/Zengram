@@ -13,13 +13,14 @@ import { scrubCredentials, scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateMemoryInput, MAX_OBSERVED_BY } from '../middleware/validate.js';
 import { dispatchNotification } from '../services/notifications.js';
+import { getClientResolver } from '../services/client-resolver.js';
 
 export const memoryRouter = Router();
 
 // POST /memory — Store a memory
 memoryRouter.post('/', async (req, res) => {
   try {
-    const { type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = req.body;
+    let { type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = req.body;
 
     // Validate all input fields
     const validationError = validateMemoryInput(req.body);
@@ -32,6 +33,15 @@ memoryRouter.post('/', async (req, res) => {
       return res.status(403).json({
         error: `Agent identity mismatch: authenticated as "${req.authenticatedAgent}" but source_agent is "${source_agent}"`,
       });
+    }
+
+    // Auto-resolve client_id from content if not provided or is 'global'
+    if (!client_id || client_id === 'global') {
+      const resolver = getClientResolver();
+      const resolved = resolver.resolve(content);
+      if (resolved && !Array.isArray(resolved)) {
+        client_id = resolved;
+      }
     }
 
     // Scrub credentials
