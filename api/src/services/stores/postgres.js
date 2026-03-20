@@ -88,6 +88,20 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_eml_entity ON entity_memory_links(entity_id);
       CREATE INDEX IF NOT EXISTS idx_eml_memory ON entity_memory_links(memory_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_eml_unique ON entity_memory_links(entity_id, memory_id, role);
+
+      CREATE TABLE IF NOT EXISTS entity_relationships (
+        id SERIAL PRIMARY KEY,
+        source_entity_id INTEGER REFERENCES entities(id),
+        target_entity_id INTEGER REFERENCES entities(id),
+        relationship_type TEXT NOT NULL DEFAULT 'co_occurrence',
+        strength INTEGER DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(source_entity_id, target_entity_id, relationship_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_entity_id);
+      CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
     `);
 
     console.log(`[postgres] Database ready`);
@@ -270,5 +284,19 @@ export class PostgresStore {
     const byType = (await this.pool.query('SELECT entity_type, COUNT(*) as count FROM entities GROUP BY entity_type')).rows;
     const topMentioned = (await this.pool.query('SELECT canonical_name, entity_type, mention_count FROM entities ORDER BY mention_count DESC LIMIT 10')).rows;
     return { total: parseInt(total), by_type: Object.fromEntries(byType.map(r => [r.entity_type, parseInt(r.count)])), top_mentioned: topMentioned };
+  }
+
+  // --- Entity relationship methods ---
+
+  async createRelationship(sourceId, targetId, type = 'co_occurrence') {
+    const result = await this.pool.query(
+      `INSERT INTO entity_relationships (source_entity_id, target_entity_id, relationship_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (source_entity_id, target_entity_id, relationship_type)
+       DO UPDATE SET strength = entity_relationships.strength + 1, updated_at = NOW()
+       RETURNING id, strength`,
+      [sourceId, targetId, type]
+    );
+    return { id: result.rows[0].id, strength: result.rows[0].strength };
   }
 }

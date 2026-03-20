@@ -112,3 +112,7 @@ export async function loadAllAliases() {
 export async function getEntityStats() {
   return requireStore().getEntityStats();
 }
+
+export async function createRelationship(sourceId, targetId, type) {
+  return requireStore().createRelationship(sourceId, targetId, type);
+}

@@ -106,6 +106,23 @@ export class SQLiteStore {
       }
     }
 
+    // Entity relationships table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS entity_relationships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_entity_id INTEGER REFERENCES entities(id),
+        target_entity_id INTEGER REFERENCES entities(id),
+        relationship_type TEXT NOT NULL DEFAULT 'co_occurrence',
+        strength INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(source_entity_id, target_entity_id, relationship_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_entity_id);
+      CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
+    `);
+
     console.log(`[sqlite] Database ready at ${this.dbPath}`);
   }
 
@@ -356,5 +373,26 @@ export class SQLiteStore {
     const byType = this.db.prepare('SELECT entity_type, COUNT(*) as count FROM entities GROUP BY entity_type').all();
     const topMentioned = this.db.prepare('SELECT canonical_name, entity_type, mention_count FROM entities ORDER BY mention_count DESC LIMIT 10').all();
     return { total, by_type: Object.fromEntries(byType.map(r => [r.entity_type, r.count])), top_mentioned: topMentioned };
+  }
+
+  // --- Entity relationship methods ---
+
+  createRelationship(sourceId, targetId, type = 'co_occurrence') {
+    const now = new Date().toISOString();
+    const existing = this.db.prepare(
+      'SELECT id, strength FROM entity_relationships WHERE source_entity_id = @source AND target_entity_id = @target AND relationship_type = @type'
+    ).get({ source: sourceId, target: targetId, type });
+
+    if (existing) {
+      this.db.prepare(
+        'UPDATE entity_relationships SET strength = strength + 1, updated_at = @now WHERE id = @id'
+      ).run({ now, id: existing.id });
+      return { id: existing.id, strength: existing.strength + 1 };
+    }
+
+    const result = this.db.prepare(
+      'INSERT INTO entity_relationships (source_entity_id, target_entity_id, relationship_type, strength, created_at, updated_at) VALUES (@source, @target, @type, 1, @now, @now)'
+    ).run({ source: sourceId, target: targetId, type, now });
+    return { id: result.lastInsertRowid, strength: 1 };
   }
 }
