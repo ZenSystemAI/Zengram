@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { complete, getLLMInfo } from './llm/interface.js';
 import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './qdrant.js';
 import { embed } from './embedders/interface.js';
-import { isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, upsertAlias, loadAllAliases } from './stores/interface.js';
+import { isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, upsertAlias, loadAllAliases, createRelationship } from './stores/interface.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
 import { dispatchNotification } from './notifications.js';
 
@@ -51,6 +51,19 @@ Analyze the following memories and produce a JSON response with these fields:
       "aliases": ["other-name", "abbreviation", "slug"],
       "mentioned_in": ["memory-id-1", "memory-id-2"]
     }
+  ],
+  "knowledge_categories": [
+    {
+      "memory_id": "id of memory to reclassify",
+      "suggested_category": "brand|strategy|meeting|content|technical|relationship|general"
+    }
+  ],
+  "entity_relationship_types": [
+    {
+      "source_entity": "canonical name of first entity",
+      "target_entity": "canonical name of second entity",
+      "relationship_type": "contact_of|same_owner|uses|works_on|competitor_of|co_occurrence"
+    }
   ]
 }
 
@@ -70,6 +83,8 @@ Rules:
 - If an entity appears in client_id fields, its type is "client"
 - Domain names (*.com, *.ca, etc.) have type "domain"
 - Tools and software have type "technology"
+- For each memory, suggest the most appropriate knowledge_category from: brand, strategy, meeting, content, technical, relationship, general. Consider: brand=voice/identity/guidelines, strategy=plans/positioning/campaigns, meeting=call notes/action items, content=published work/performance, technical=hosting/CMS/SEO issues, relationship=contacts/preferences. Only include a memory in knowledge_categories if you are suggesting a category different from its current knowledge_category attribute (or if the current one is null/general and a more specific one fits).
+- For pairs of entities that frequently appear together in the memories, suggest a relationship type from: contact_of, same_owner, uses, works_on, competitor_of, co_occurrence. Only suggest relationships when the memory content makes the relationship clear.
 
 MEMORIES TO ANALYZE:
 `;
@@ -107,6 +122,8 @@ export async function runConsolidation() {
     let totalInsights = 0;
     let totalSkipped = 0;
     let totalEntities = 0;
+    let totalCategoriesUpdated = 0;
+    let totalRelationshipsCreated = 0;
     const errors = [];
 
     for (const [clientId, groupPoints] of Object.entries(groups)) {
@@ -122,6 +139,8 @@ export async function runConsolidation() {
           totalInsights += result.insights;
           totalSkipped += result.skipped || 0;
           totalEntities += result.entities || 0;
+          totalCategoriesUpdated += result.categories_updated || 0;
+          totalRelationshipsCreated += result.relationships_created || 0;
 
           // Mark batch as consolidated
           const ids = batch.map(p => p.id);
@@ -147,6 +166,8 @@ export async function runConsolidation() {
       insights_generated: totalInsights,
       skipped_dedup: totalSkipped,
       entities_processed: totalEntities,
+      categories_updated: totalCategoriesUpdated,
+      relationships_created: totalRelationshipsCreated,
       errors: errors.length > 0 ? errors : undefined,
       duration_ms: duration,
       llm: getLLMInfo(),
@@ -171,7 +192,7 @@ export async function runConsolidation() {
     }
     summary.events_expired = eventsExpired;
 
-    console.log(`[consolidation] Complete: ${points.length} memories, ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalInsights} insights, ${totalSkipped} skipped (dedup), ${totalEntities} entities, ${eventsExpired} events expired`);
+    console.log(`[consolidation] Complete: ${points.length} memories, ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalInsights} insights, ${totalSkipped} skipped (dedup), ${totalEntities} entities, ${totalCategoriesUpdated} categories updated, ${totalRelationshipsCreated} relationships, ${eventsExpired} events expired`);
 
     return summary;
   } catch (err) {
@@ -197,7 +218,8 @@ async function consolidateBatch(points, clientId) {
     const safeText = escapeXml(pay.text);
     const safeAgent = escapeXml(pay.source_agent || '');
     const safeClient = escapeXml(pay.client_id || '');
-    return `<memory id="${p.id}" type="${pay.type}" agent="${safeAgent}" client="${safeClient}" created="${pay.created_at}">\n${safeText}\n</memory>`;
+    const safeKnowledgeCategory = escapeXml(pay.knowledge_category || '');
+    return `<memory id="${p.id}" type="${pay.type}" agent="${safeAgent}" client="${safeClient}" knowledge_category="${safeKnowledgeCategory}" created="${pay.created_at}">\n${safeText}\n</memory>`;
   }).join('\n\n');
 
   const prompt = CONSOLIDATION_PROMPT + memoriesText;
@@ -255,6 +277,22 @@ async function consolidateBatch(points, clientId) {
         ent.mentioned_in = ent.mentioned_in.filter(id => batchIds.has(id));
       }
     }
+  }
+  // Validate knowledge_categories: only accept entries with valid memory IDs and valid categories
+  const VALID_KNOWLEDGE_CATEGORIES = ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'];
+  if (result.knowledge_categories) {
+    result.knowledge_categories = result.knowledge_categories.filter(kc =>
+      kc.memory_id && batchIds.has(kc.memory_id) &&
+      kc.suggested_category && VALID_KNOWLEDGE_CATEGORIES.includes(kc.suggested_category)
+    );
+  }
+  // Validate entity_relationship_types: only accept entries with valid relationship types
+  const VALID_RELATIONSHIP_TYPES = ['contact_of', 'same_owner', 'uses', 'works_on', 'competitor_of', 'co_occurrence'];
+  if (result.entity_relationship_types) {
+    result.entity_relationship_types = result.entity_relationship_types.filter(ert =>
+      ert.source_entity && ert.target_entity && ert.relationship_type &&
+      VALID_RELATIONSHIP_TYPES.includes(ert.relationship_type)
+    );
   }
 
   const VALID_IMPORTANCE = ['critical', 'high', 'medium', 'low'];
@@ -432,7 +470,56 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  return { merged, contradictions, connections, insights, skipped, entities: entitiesProcessed };
+  // Reclassify knowledge_category for memories where the LLM suggests a better fit
+  let categoriesUpdated = 0;
+  if (result.knowledge_categories?.length > 0) {
+    for (const kc of result.knowledge_categories) {
+      try {
+        // Find the point in the batch to check current knowledge_category
+        const point = points.find(p => p.id === kc.memory_id);
+        const currentCategory = point?.payload?.knowledge_category;
+
+        // Only reclassify if current is null, empty, or 'general'
+        if (!currentCategory || currentCategory === 'general' || currentCategory === '') {
+          await updatePointPayload(kc.memory_id, { knowledge_category: kc.suggested_category });
+          categoriesUpdated++;
+        }
+      } catch (e) {
+        // Point might not exist — skip
+      }
+    }
+    if (categoriesUpdated > 0) {
+      console.log(`[consolidation] Reclassified ${categoriesUpdated} memories with knowledge_category`);
+    }
+  }
+
+  // Create entity relationships based on LLM-suggested types
+  let relationshipsCreated = 0;
+  if (result.entity_relationship_types?.length > 0 && isEntityStoreAvailable()) {
+    for (const ert of result.entity_relationship_types) {
+      try {
+        const sourceEntity = await findEntity(ert.source_entity);
+        const targetEntity = await findEntity(ert.target_entity);
+
+        if (sourceEntity && targetEntity && sourceEntity.id !== targetEntity.id) {
+          await createRelationship(sourceEntity.id, targetEntity.id, ert.relationship_type);
+          relationshipsCreated++;
+        }
+      } catch (e) {
+        console.error(`[consolidation] Relationship creation failed for "${ert.source_entity}" -> "${ert.target_entity}":`, e.message);
+      }
+    }
+    if (relationshipsCreated > 0) {
+      console.log(`[consolidation] Created/updated ${relationshipsCreated} entity relationships`);
+    }
+  }
+
+  return {
+    merged, contradictions, connections, insights, skipped,
+    entities: entitiesProcessed,
+    categories_updated: categoriesUpdated,
+    relationships_created: relationshipsCreated,
+  };
 }
 
 const EVENT_TTL_DAYS = parseInt(process.env.EVENT_TTL_DAYS) || 30;
