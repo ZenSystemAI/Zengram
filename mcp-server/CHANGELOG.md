@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0 (2026-03-20)
+
+### Features
+- **Client knowledge base**: Fingerprint-based client identification with accent normalization, `knowledge_category` field (brand/strategy/meeting/content/technical/relationship/general), `brain_client` tool for one-call client briefings with fuzzy name resolution
+- **Import/Export**: `brain_export` and `brain_import` tools for backup and embedding migration safety, with dedup and batch processing
+- **Webhook notifications**: Real-time dispatch on memory store/supersede/delete events via configurable webhook URLs
+- **Entity graph**: Relationship tracking with co-occurrence detection, `brain_graph` tool, interactive D3.js visualization (dark theme, force-directed, searchable)
+- **Consolidation enhancements**: Automatic knowledge_category reclassification and entity relationship type classification during 6h consolidation pass
+- **Auto-resolve client_id**: Memory store auto-tags client_id from content using fingerprint matching when not explicitly provided
+- **Gemini Embedding 2**: New pluggable embedder with task-type-aware embeddings (RETRIEVAL_DOCUMENT/RETRIEVAL_QUERY), Matryoshka support (3072/1536/768 dims)
+
+## 1.5.0
+
+### Long-Term Memory Hygiene
+- **Access-weighted search** — search results factor in access count alongside similarity and confidence, rewarding frequently-accessed memories
+- **Insight removal** — consolidation-generated insights can now be removed when source memories are deleted
+- **Entity fix** — fixed entity extraction for memories with no client_id
+
 ## 1.4.0
 
 ### Token Optimization
