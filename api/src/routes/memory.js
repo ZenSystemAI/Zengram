@@ -166,7 +166,7 @@ memoryRouter.post('/', async (req, res) => {
     }
 
     // Embed and store in Qdrant
-    const vector = await embed(cleanContent);
+    const vector = await embed(cleanContent, 'store');
     await upsertPoint(pointId, vector, payload);
 
     // Link entities in structured store (fire-and-forget — don't block response)
@@ -240,7 +240,7 @@ memoryRouter.get('/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing required query parameter: q' });
     }
 
-    const vector = await embed(q);
+    const vector = await embed(q, 'search');
 
     const filter = {};
     if (type) filter.type = type;

@@ -113,7 +113,7 @@ webhookRouter.post('/n8n', async (req, res) => {
     const entityPayload = extractedEntities.length > 0 ? extractedEntities.map(e => ({ name: e.name, type: e.type })) : undefined;
 
     // Store as event in Qdrant
-    const vector = await embed(content);
+    const vector = await embed(content, 'store');
     await upsertPoint(pointId, vector, {
       text: content,
       type: 'event',

@@ -1,5 +1,6 @@
 // Embedding provider interface
-// Each provider must implement: embed(text) → number[], getDimensions() → number
+// Each provider must implement: embed(text, purpose?) → number[], getDimensions() → number
+// purpose: 'store' | 'search' — providers that support task-specific embeddings (e.g. Gemini) use this
 
 const PROVIDER = process.env.EMBEDDING_PROVIDER || 'openai';
 
@@ -12,6 +13,11 @@ export async function initEmbeddings() {
       provider = new OpenAIEmbedder();
       break;
     }
+    case 'gemini': {
+      const { GeminiEmbedder } = await import('./gemini.js');
+      provider = new GeminiEmbedder();
+      break;
+    }
     case 'ollama': {
       const { OllamaEmbedder } = await import('./ollama.js');
       provider = new OllamaEmbedder();
@@ -20,7 +26,7 @@ export async function initEmbeddings() {
       break;
     }
     default:
-      throw new Error(`Unknown embedding provider: ${PROVIDER}. Use: openai, ollama`);
+      throw new Error(`Unknown embedding provider: ${PROVIDER}. Use: openai, gemini, ollama`);
   }
 
   // Validate with a test embed
@@ -35,9 +41,9 @@ export async function initEmbeddings() {
   }
 }
 
-export async function embed(text) {
+export async function embed(text, purpose) {
   if (!provider) throw new Error('Embedding provider not initialized. Call initEmbeddings() first.');
-  return provider.embed(text);
+  return provider.embed(text, purpose);
 }
 
 export function getEmbeddingDimensions() {

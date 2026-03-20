@@ -166,7 +166,7 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 | Credential scrubbing | **Yes** | No | No | No |
 | Timing-safe auth + rate limiting | **Yes** | No | No | No |
 | Session briefings | **Yes** | No | No | No |
-| Pluggable embeddings | OpenAI, Ollama | Multiple | Local ONNX | No |
+| Pluggable embeddings | OpenAI, Gemini, Ollama | Multiple | Local ONNX | No |
 | Pluggable storage backends | SQLite, Postgres, Baserow | Multiple vector DBs | SQLite, Cloudflare | File |
 | MCP server | **Yes** | Yes | Yes | Yes |
 | Self-hostable | **Yes** | Community ed. | Yes | Yes |
@@ -189,9 +189,9 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 │  GET /memory/query  POST /webhook/n8n  POST /consolidate  GET /entities   │
 ├──────────────────────┬────────────────────────────────────────────────────┤
 │   Embedding Layer    │            LLM Layer                               │
-│  ┌────────┐ ┌──────┐│  ┌────────┐ ┌───────────┐ ┌──────┐ ┌──────┐      │
-│  │ OpenAI │ │Ollama││  │ OpenAI │ │ Anthropic │ │Gemini│ │Ollama│      │
-│  └────────┘ └──────┘│  └────────┘ └───────────┘ └──────┘ └──────┘      │
+│  ┌────────┐ ┌──────┐ ┌──────┐│  ┌────────┐ ┌───────────┐ ┌──────┐ ┌──────┐│
+│  │ OpenAI │ │Gemini│ │Ollama││  │ OpenAI │ │ Anthropic │ │Gemini│ │Ollama││
+│  └────────┘ └──────┘ └──────┘│  └────────┘ └───────────┘ └──────┘ └──────┘│
 ├──────────────────────┴────────────────────────────────────────────────────┤
 │                          Storage Layer                                    │
 │  ┌────────────────────┐  ┌────────┐ ┌────────┐ ┌───────┐                │
@@ -422,6 +422,25 @@ docker exec shared-brain-api node scripts/backfill-entities.js
 
 Uses fast-path regex extraction only (no LLM calls, no cost). Processes all active memories, creates entity records, links them, and enriches Qdrant payloads. The next consolidation run will refine entity types and discover aliases the regex missed.
 
+### Switching Embedding Providers
+
+To switch providers (e.g., from OpenAI to Gemini) or change dimensions:
+
+1. Update `.env` with the new provider configuration
+2. Preview the migration: `node scripts/reindex-embeddings.js --dry-run`
+3. Run the migration: `node scripts/reindex-embeddings.js`
+
+This scrolls all existing memories, deletes the Qdrant collection, recreates it with the new dimensions, and re-embeds every memory. For ~250 memories this takes about a minute.
+
+```bash
+# Example: switch to Gemini Embedding 2 at max quality
+EMBEDDING_PROVIDER=gemini
+GEMINI_API_KEY=your-key
+GEMINI_EMBEDDING_DIMS=3072
+
+docker exec shared-brain-api node scripts/reindex-embeddings.js
+```
+
 ## Adapters
 
 ### MCP Server (Claude Code, Cursor, Windsurf)
@@ -531,8 +550,11 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EMBEDDING_PROVIDER` | `openai` | `openai` or `ollama` |
+| `EMBEDDING_PROVIDER` | `openai` | `openai`, `gemini`, or `ollama` |
 | `OPENAI_API_KEY` | — | Required when using OpenAI embeddings |
+| `GEMINI_API_KEY` | — | Required when using Gemini embeddings |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2-preview` | Gemini embedding model name |
+| `GEMINI_EMBEDDING_DIMS` | `3072` | Output dimensions (3072, 1536, or 768 via Matryoshka) |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `nomic-embed-text` | Ollama embedding model name |
 
@@ -631,6 +653,7 @@ multi-agent-memory/
 │   │       ├── embedders/      # Pluggable embedding providers
 │   │       │   ├── interface.js
 │   │       │   ├── openai.js
+│   │       │   ├── gemini.js
 │   │       │   └── ollama.js
 │   │       ├── llm/            # Pluggable LLM providers
 │   │       │   ├── interface.js
@@ -644,7 +667,8 @@ multi-agent-memory/
 │   │           ├── postgres.js
 │   │           └── baserow.js
 │   ├── scripts/
-│   │   ├── backfill-entities.js # One-time entity extraction for existing memories
+│   │   ├── backfill-entities.js    # One-time entity extraction for existing memories
+│   │   ├── reindex-embeddings.js   # Re-embed all memories (for provider/dimension changes)
 │   │   └── cleanup-duplicates.js
 │   ├── Dockerfile
 │   └── package.json

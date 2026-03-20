@@ -276,7 +276,7 @@ async function consolidateBatch(points, clientId) {
         continue;
       }
 
-      const vector = await embed(content);
+      const vector = await embed(content, 'store');
 
       // Semantic dedup: skip if a very similar memory already exists
       const similar = await searchPoints(vector, { active: true }, 1);
@@ -326,7 +326,7 @@ async function consolidateBatch(points, clientId) {
   if (result.contradictions?.length > 0) {
     for (const contradiction of result.contradictions) {
       const content = `CONTRADICTION DETECTED: ${contradiction.description}. Suggested resolution: ${contradiction.suggested_resolution}`;
-      const vector = await embed(content);
+      const vector = await embed(content, 'store');
       await upsertPoint(crypto.randomUUID(), vector, {
         text: content,
         type: 'event',

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "find tests -name '*.test.js' | xargs node --test"
+    "test": "find tests -name '*.test.js' | xargs node --test",
+    "reindex": "node scripts/reindex-embeddings.js"
   },
   "engines": {
     "node": ">=20.0.0"
