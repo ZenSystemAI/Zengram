@@ -92,6 +92,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'For status only: the current status value',
           },
+          knowledge_category: {
+            type: 'string',
+            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            description: 'Domain category: brand=voice/identity, strategy=plans/positioning, meeting=call takeaways, content=published work, technical=hosting/CMS/SEO issues, relationship=contacts/preferences, general=default',
+          },
         },
         required: ['type', 'content', 'source_agent'],
       },
@@ -131,6 +136,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           include_superseded: {
             type: 'boolean',
             description: 'Set to true to include superseded memories in results (default: false)',
+          },
+          knowledge_category: {
+            type: 'string',
+            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            description: 'Filter by knowledge category (optional)',
           },
         },
         required: ['query'],
@@ -284,6 +294,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             key: args.key,
             subject: args.subject,
             status_value: args.status_value,
+            knowledge_category: args.knowledge_category,
           }),
         });
         break;
@@ -296,6 +307,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.limit) params.append('limit', String(args.limit));
         params.append('format', args.format || 'compact');
         if (args.include_superseded) params.append('include_superseded', 'true');
+        if (args.knowledge_category) params.append('knowledge_category', args.knowledge_category);
         result = await apiRequest(`/memory/search?${params}`);
         break;
       }
