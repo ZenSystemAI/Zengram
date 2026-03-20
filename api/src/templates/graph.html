@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ENTITY_NAME}} — Knowledge Graph</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: rgba(255,255,255,0.04);
+    --surface-hover: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.08);
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+    --client: #4ECDB8;
+    --person: #F59E0B;
+    --technology: #3B82F6;
+    --workflow: #8B5CF6;
+    --agent: #EF4444;
+    --domain: #10B981;
+    --service: #EC4899;
+    --system: #6366F1;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* Animated grid background */
+  .grid-bg {
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 60px 60px;
+    animation: gridShift 30s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  @keyframes gridShift {
+    0% { background-position: 0 0; }
+    100% { background-position: 60px 60px; }
+  }
+
+  /* Ambient glow */
+  .ambient-glow {
+    position: fixed;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.08;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .ambient-glow.g1 { top: -200px; left: -200px; background: var(--technology); }
+  .ambient-glow.g2 { bottom: -200px; right: -200px; background: var(--workflow); }
+  .ambient-glow.g3 { top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--client); opacity: 0.04; }
+
+  /* Title bar */
+  .title-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    background: linear-gradient(180deg, rgba(10,10,15,0.95) 0%, rgba(10,10,15,0.7) 100%);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+
+  .title-bar h1 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .title-bar .entity-badge {
+    margin-left: 12px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid;
+    opacity: 0.8;
+  }
+
+  .title-bar .node-count {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  /* Search bar */
+  .search-container {
+    position: fixed;
+    top: 12px;
+    right: 180px;
+    z-index: 200;
+  }
+
+  .search-input {
+    width: 240px;
+    padding: 8px 16px 8px 36px;
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: 'Inter', system-ui;
+    font-size: 13px;
+    outline: none;
+    transition: all 0.3s ease;
+  }
+
+  .search-input:focus {
+    border-color: rgba(78,205,184,0.4);
+    background: rgba(255,255,255,0.1);
+    box-shadow: 0 0 20px rgba(78,205,184,0.1);
+    width: 300px;
+  }
+
+  .search-input::placeholder { color: var(--text-dim); }
+
+  .search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 14px;
+    pointer-events: none;
+  }
+
+  /* Export button */
+  .export-btn {
+    position: fixed;
+    top: 12px;
+    right: 24px;
+    z-index: 200;
+    padding: 8px 16px;
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-family: 'Inter', system-ui;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .export-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: var(--text);
+    border-color: rgba(255,255,255,0.2);
+  }
+
+  /* SVG graph */
+  #graph {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+  }
+
+  #graph svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* SVG glow filter */
+  .node-glow {
+    filter: url(#nodeGlow);
+  }
+
+  /* Edge styles */
+  .edge-line {
+    stroke-linecap: round;
+    transition: opacity 0.3s ease;
+  }
+
+  .edge-line.dimmed {
+    opacity: 0.05 !important;
+  }
+
+  .edge-label {
+    font-family: 'Inter', system-ui;
+    font-size: 10px;
+    fill: var(--text-dim);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .edge-label.visible {
+    opacity: 1;
+  }
+
+  /* Node styles */
+  .node-group {
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+  }
+
+  .node-group.dimmed {
+    opacity: 0.08;
+  }
+
+  .node-group.dimmed .node-label {
+    opacity: 0;
+  }
+
+  .node-circle {
+    transition: r 0.3s ease, filter 0.3s ease;
+  }
+
+  .node-label {
+    font-family: 'Inter', system-ui;
+    font-weight: 500;
+    fill: var(--text);
+    pointer-events: none;
+    transition: opacity 0.3s ease, font-size 0.3s ease;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed;
+    padding: 10px 14px;
+    background: rgba(15,15,25,0.92);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--text);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 300;
+    max-width: 240px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  .tooltip.visible { opacity: 1; }
+
+  .tooltip .tt-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .tooltip .tt-type {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.7;
+    margin-bottom: 4px;
+  }
+  .tooltip .tt-count { font-size: 11px; color: var(--text-muted); }
+
+  /* Info panel */
+  .info-panel {
+    position: fixed;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    width: 320px;
+    background: rgba(10,10,15,0.85);
+    backdrop-filter: blur(30px);
+    border-left: 1px solid var(--border);
+    z-index: 50;
+    padding: 24px;
+    overflow-y: auto;
+    transform: translateX(100%);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .info-panel.open {
+    transform: translateX(0);
+  }
+
+  .info-panel .close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--surface);
+    border-radius: 8px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .info-panel .close-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .info-panel .panel-entity-name {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 8px;
+    padding-right: 40px;
+  }
+
+  .info-panel .panel-entity-type {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 16px;
+    border: 1px solid;
+  }
+
+  .info-panel .panel-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .info-panel .panel-stat .label { color: var(--text-muted); }
+  .info-panel .panel-stat .value { font-weight: 600; }
+
+  .info-panel .connections-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 20px 0 12px;
+  }
+
+  .info-panel .connection-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    background: var(--surface);
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .info-panel .connection-item:hover {
+    background: var(--surface-hover);
+  }
+
+  .info-panel .connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .info-panel .connection-name {
+    flex: 1;
+    font-weight: 500;
+  }
+
+  .info-panel .connection-type {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .info-panel .connection-strength {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+
+  .info-panel .panel-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  /* Branding */
+  .branding {
+    position: fixed;
+    bottom: 16px;
+    left: 20px;
+    z-index: 100;
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.5;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: opacity 0.3s ease;
+  }
+
+  .branding:hover { opacity: 0.8; }
+
+  .branding-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--client);
+    animation: brandPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes brandPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* Legend */
+  .legend {
+    position: fixed;
+    bottom: 16px;
+    right: 20px;
+    z-index: 100;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 500px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Loading */
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.6s ease;
+  }
+
+  .loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-ring {
+    width: 48px;
+    height: 48px;
+    border: 2px solid var(--border);
+    border-top-color: var(--client);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .info-panel { width: 100%; }
+    .search-input { width: 160px; }
+    .search-input:focus { width: 200px; }
+    .legend { display: none; }
+    .search-container { right: 120px; }
+  }
+
+  /* Animated edge dashes */
+  @keyframes dashFlow {
+    to { stroke-dashoffset: -20; }
+  }
+
+  /* Scrollbar */
+  .info-panel::-webkit-scrollbar { width: 4px; }
+  .info-panel::-webkit-scrollbar-track { background: transparent; }
+  .info-panel::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+<div class="ambient-glow g1"></div>
+<div class="ambient-glow g2"></div>
+<div class="ambient-glow g3"></div>
+
+<!-- Loading -->
+<div class="loading-overlay" id="loading">
+  <div class="loading-ring"></div>
+  <div class="loading-text">Building knowledge graph...</div>
+</div>
+
+<!-- Title bar -->
+<div class="title-bar">
+  <h1>{{ENTITY_NAME}} — Knowledge Graph</h1>
+  <span class="entity-badge" id="centerBadge"></span>
+  <span class="node-count" id="nodeCount"></span>
+</div>
+
+<!-- Search -->
+<div class="search-container">
+  <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+  </svg>
+  <input type="text" class="search-input" id="searchInput" placeholder="Search entities..." autocomplete="off" spellcheck="false">
+</div>
+
+<!-- Export -->
+<button class="export-btn" id="exportBtn" title="Export as PNG">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+  PNG
+</button>
+
+<!-- Graph -->
+<div id="graph"></div>
+
+<!-- Tooltip -->
+<div class="tooltip" id="tooltip">
+  <div class="tt-name" id="ttName"></div>
+  <div class="tt-type" id="ttType"></div>
+  <div class="tt-count" id="ttCount"></div>
+</div>
+
+<!-- Info panel -->
+<div class="info-panel" id="infoPanel">
+  <button class="close-btn" id="closePanelBtn">&times;</button>
+  <div class="panel-entity-name" id="panelName"></div>
+  <div class="panel-entity-type" id="panelType"></div>
+  <div class="panel-stat">
+    <span class="label">Mentions</span>
+    <span class="value" id="panelMentions"></span>
+  </div>
+  <div class="panel-stat">
+    <span class="label">Connections</span>
+    <span class="value" id="panelConnections"></span>
+  </div>
+  <div class="connections-title">Connected Entities</div>
+  <div id="connectionsList"></div>
+  <div class="panel-footer">Powered by Shared Brain</div>
+</div>
+
+<!-- Branding -->
+<div class="branding">
+  <span class="branding-dot"></span>
+  <span>Shared Brain</span>
+</div>
+
+<!-- Legend -->
+<div class="legend" id="legend"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function() {
+  'use strict';
+
+  // --- Data ---
+  const graphData = {{GRAPH_DATA}};
+  const centerEntity = graphData.center;
+
+  // --- Color map ---
+  const typeColors = {
+    client: '#4ECDB8',
+    person: '#F59E0B',
+    technology: '#3B82F6',
+    workflow: '#8B5CF6',
+    agent: '#EF4444',
+    domain: '#10B981',
+    service: '#EC4899',
+    system: '#6366F1',
+  };
+
+  function getColor(type) {
+    return typeColors[type] || '#94a3b8';
+  }
+
+  // --- Scale for node radius ---
+  const mentionExtent = d3.extent(graphData.nodes, d => d.mention_count || 1);
+  const radiusScale = d3.scaleSqrt()
+    .domain([mentionExtent[0] || 1, Math.max(mentionExtent[1] || 1, 2)])
+    .range([12, 50]);
+
+  // --- Scale for edge width ---
+  const strengthExtent = d3.extent(graphData.edges, d => d.strength || 1);
+  const edgeWidthScale = d3.scaleLinear()
+    .domain([strengthExtent[0] || 1, Math.max(strengthExtent[1] || 1, 2)])
+    .range([1, 6]);
+
+  // --- Adjacency map ---
+  const adjacency = new Map();
+  graphData.nodes.forEach(n => adjacency.set(n.id, new Set()));
+  graphData.edges.forEach(e => {
+    const sId = typeof e.source === 'object' ? e.source.id : e.source;
+    const tId = typeof e.target === 'object' ? e.target.id : e.target;
+    if (adjacency.has(sId)) adjacency.get(sId).add(tId);
+    if (adjacency.has(tId)) adjacency.get(tId).add(sId);
+  });
+
+  // --- Setup SVG ---
+  const container = document.getElementById('graph');
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  const svg = d3.select('#graph')
+    .append('svg')
+    .attr('width', width)
+    .attr('height', height);
+
+  // Glow filter
+  const defs = svg.append('defs');
+
+  const glowFilter = defs.append('filter')
+    .attr('id', 'nodeGlow')
+    .attr('x', '-50%').attr('y', '-50%')
+    .attr('width', '200%').attr('height', '200%');
+  glowFilter.append('feGaussianBlur')
+    .attr('stdDeviation', '4')
+    .attr('result', 'blur');
+  glowFilter.append('feComposite')
+    .attr('in', 'SourceGraphic')
+    .attr('in2', 'blur')
+    .attr('operator', 'over');
+
+  const edgeGlow = defs.append('filter')
+    .attr('id', 'edgeGlow')
+    .attr('x', '-20%').attr('y', '-20%')
+    .attr('width', '140%').attr('height', '140%');
+  edgeGlow.append('feGaussianBlur')
+    .attr('stdDeviation', '2')
+    .attr('result', 'blur');
+  edgeGlow.append('feComposite')
+    .attr('in', 'SourceGraphic')
+    .attr('in2', 'blur')
+    .attr('operator', 'over');
+
+  // Main group for zoom/pan
+  const g = svg.append('g');
+
+  // Zoom
+  const zoom = d3.zoom()
+    .scaleExtent([0.1, 6])
+    .on('zoom', (event) => {
+      g.attr('transform', event.transform);
+    });
+
+  svg.call(zoom);
+
+  // Center initially
+  const initialTransform = d3.zoomIdentity.translate(width / 2, height / 2).scale(0.9);
+  svg.call(zoom.transform, initialTransform);
+
+  // --- Simulation ---
+  const simulation = d3.forceSimulation(graphData.nodes)
+    .force('link', d3.forceLink(graphData.edges)
+      .id(d => d.id)
+      .distance(d => {
+        const str = d.strength || 1;
+        return Math.max(80, 200 - str * 10);
+      })
+      .strength(d => Math.min(0.8, (d.strength || 1) / (strengthExtent[1] || 10)))
+    )
+    .force('charge', d3.forceManyBody()
+      .strength(d => {
+        const r = radiusScale(d.mention_count || 1);
+        return -r * 15;
+      })
+    )
+    .force('center', d3.forceCenter(0, 0))
+    .force('collision', d3.forceCollide()
+      .radius(d => radiusScale(d.mention_count || 1) + 8)
+    )
+    .alphaDecay(0.02)
+    .velocityDecay(0.3);
+
+  // Pin center entity
+  const centerNode = graphData.nodes.find(n => n.id === centerEntity);
+  if (centerNode) {
+    centerNode.fx = 0;
+    centerNode.fy = 0;
+    // Unpin after settling
+    setTimeout(() => {
+      centerNode.fx = null;
+      centerNode.fy = null;
+    }, 3000);
+  }
+
+  // --- Draw edges ---
+  const edgeGroup = g.append('g').attr('class', 'edges');
+
+  const edges = edgeGroup.selectAll('line')
+    .data(graphData.edges)
+    .join('line')
+    .attr('class', 'edge-line')
+    .attr('stroke', d => {
+      const sType = graphData.nodes.find(n => n.id === (typeof d.source === 'object' ? d.source.id : d.source))?.type;
+      const col = getColor(sType);
+      return col;
+    })
+    .attr('stroke-opacity', 0.2)
+    .attr('stroke-width', d => edgeWidthScale(d.strength || 1))
+    .attr('filter', 'url(#edgeGlow)')
+    .attr('stroke-dasharray', d => {
+      const w = edgeWidthScale(d.strength || 1);
+      return w < 2 ? '4 4' : 'none';
+    })
+    .style('animation', d => {
+      const w = edgeWidthScale(d.strength || 1);
+      return w < 2 ? 'dashFlow 1.5s linear infinite' : 'none';
+    });
+
+  // Edge labels (hidden by default, shown on hover)
+  const edgeLabels = edgeGroup.selectAll('text')
+    .data(graphData.edges)
+    .join('text')
+    .attr('class', 'edge-label')
+    .attr('text-anchor', 'middle')
+    .attr('dy', -6)
+    .text(d => (d.type || '').replace(/_/g, ' '));
+
+  // --- Draw nodes ---
+  const nodeGroup = g.append('g').attr('class', 'nodes');
+
+  const nodes = nodeGroup.selectAll('g')
+    .data(graphData.nodes)
+    .join('g')
+    .attr('class', 'node-group')
+    .call(d3.drag()
+      .on('start', dragStarted)
+      .on('drag', dragged)
+      .on('end', dragEnded)
+    );
+
+  // Outer glow circle
+  nodes.append('circle')
+    .attr('class', 'node-glow-ring')
+    .attr('r', d => radiusScale(d.mention_count || 1) + 4)
+    .attr('fill', 'none')
+    .attr('stroke', d => getColor(d.type))
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', d => d.id === centerEntity ? 0.5 : 0.15);
+
+  // Main circle
+  nodes.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', d => radiusScale(d.mention_count || 1))
+    .attr('fill', d => {
+      const col = getColor(d.type);
+      return d.id === centerEntity ? col : col;
+    })
+    .attr('fill-opacity', d => d.id === centerEntity ? 0.35 : 0.2)
+    .attr('stroke', d => getColor(d.type))
+    .attr('stroke-width', d => d.id === centerEntity ? 2.5 : 1.5)
+    .attr('filter', 'url(#nodeGlow)');
+
+  // Inner dot
+  nodes.append('circle')
+    .attr('r', d => Math.max(3, radiusScale(d.mention_count || 1) * 0.25))
+    .attr('fill', d => getColor(d.type))
+    .attr('fill-opacity', 0.9);
+
+  // Labels
+  nodes.append('text')
+    .attr('class', 'node-label')
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => radiusScale(d.mention_count || 1) + 16)
+    .attr('font-size', d => {
+      const r = radiusScale(d.mention_count || 1);
+      return Math.max(9, Math.min(13, r * 0.6)) + 'px';
+    })
+    .text(d => d.id);
+
+  // --- Interactions ---
+  const tooltip = document.getElementById('tooltip');
+  const ttName = document.getElementById('ttName');
+  const ttType = document.getElementById('ttType');
+  const ttCount = document.getElementById('ttCount');
+
+  // Hover
+  nodes
+    .on('mouseenter', function(event, d) {
+      // Show tooltip
+      ttName.textContent = d.id;
+      ttType.textContent = d.type;
+      ttType.style.color = getColor(d.type);
+      ttCount.textContent = (d.mention_count || 0) + ' mentions';
+      tooltip.classList.add('visible');
+
+      // Grow node
+      d3.select(this).select('.node-circle')
+        .transition().duration(200)
+        .attr('r', radiusScale(d.mention_count || 1) * 1.15)
+        .attr('fill-opacity', 0.4);
+
+      d3.select(this).select('.node-glow-ring')
+        .transition().duration(200)
+        .attr('r', radiusScale(d.mention_count || 1) * 1.15 + 6)
+        .attr('stroke-opacity', 0.6);
+
+      // Show edge labels for connected edges
+      edgeLabels
+        .classed('visible', e => {
+          const sId = typeof e.source === 'object' ? e.source.id : e.source;
+          const tId = typeof e.target === 'object' ? e.target.id : e.target;
+          return sId === d.id || tId === d.id;
+        });
+    })
+    .on('mousemove', function(event) {
+      tooltip.style.left = (event.clientX + 16) + 'px';
+      tooltip.style.top = (event.clientY - 10) + 'px';
+    })
+    .on('mouseleave', function(event, d) {
+      tooltip.classList.remove('visible');
+
+      d3.select(this).select('.node-circle')
+        .transition().duration(300)
+        .attr('r', radiusScale(d.mention_count || 1))
+        .attr('fill-opacity', d.id === centerEntity ? 0.35 : 0.2);
+
+      d3.select(this).select('.node-glow-ring')
+        .transition().duration(300)
+        .attr('r', radiusScale(d.mention_count || 1) + 4)
+        .attr('stroke-opacity', d.id === centerEntity ? 0.5 : 0.15);
+
+      edgeLabels.classed('visible', false);
+    });
+
+  // Click — highlight connections
+  let selectedNode = null;
+
+  nodes.on('click', function(event, d) {
+    event.stopPropagation();
+
+    if (selectedNode === d.id) {
+      // Deselect
+      clearSelection();
+      return;
+    }
+
+    selectedNode = d.id;
+    const connected = adjacency.get(d.id) || new Set();
+
+    // Dim non-connected
+    nodes.classed('dimmed', n => n.id !== d.id && !connected.has(n.id));
+    edges.classed('dimmed', e => {
+      const sId = typeof e.source === 'object' ? e.source.id : e.source;
+      const tId = typeof e.target === 'object' ? e.target.id : e.target;
+      return sId !== d.id && tId !== d.id;
+    });
+
+    // Show info panel
+    showInfoPanel(d, connected);
+  });
+
+  svg.on('click', () => clearSelection());
+
+  function clearSelection() {
+    selectedNode = null;
+    nodes.classed('dimmed', false);
+    edges.classed('dimmed', false);
+    document.getElementById('infoPanel').classList.remove('open');
+  }
+
+  function showInfoPanel(d, connected) {
+    const panel = document.getElementById('infoPanel');
+    const color = getColor(d.type);
+
+    document.getElementById('panelName').textContent = d.id;
+    document.getElementById('panelName').style.color = color;
+
+    const typeEl = document.getElementById('panelType');
+    typeEl.textContent = d.type;
+    typeEl.style.color = color;
+    typeEl.style.borderColor = color + '40';
+    typeEl.style.background = color + '15';
+
+    document.getElementById('panelMentions').textContent = d.mention_count || 0;
+    document.getElementById('panelConnections').textContent = connected.size;
+
+    // Build connections list
+    const listEl = document.getElementById('connectionsList');
+    listEl.innerHTML = '';
+
+    // Sort by strength
+    const connArray = Array.from(connected).map(cId => {
+      const node = graphData.nodes.find(n => n.id === cId);
+      const edge = graphData.edges.find(e => {
+        const sId = typeof e.source === 'object' ? e.source.id : e.source;
+        const tId = typeof e.target === 'object' ? e.target.id : e.target;
+        return (sId === d.id && tId === cId) || (tId === d.id && sId === cId);
+      });
+      return { node, edge };
+    }).filter(c => c.node).sort((a, b) => (b.edge?.strength || 0) - (a.edge?.strength || 0));
+
+    connArray.forEach(({ node, edge }) => {
+      const item = document.createElement('div');
+      item.className = 'connection-item';
+      item.innerHTML = `
+        <span class="connection-dot" style="background:${getColor(node.type)}"></span>
+        <span class="connection-name">${node.id}</span>
+        <span class="connection-type">${node.type}</span>
+        <span class="connection-strength">${edge ? (edge.type || '').replace(/_/g, ' ') : ''}</span>
+      `;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Navigate to that node
+        const targetNode = graphData.nodes.find(n => n.id === node.id);
+        if (targetNode) {
+          const targetConnected = adjacency.get(node.id) || new Set();
+          selectedNode = node.id;
+          nodes.classed('dimmed', n => n.id !== node.id && !targetConnected.has(n.id));
+          edges.classed('dimmed', e => {
+            const sId = typeof e.source === 'object' ? e.source.id : e.source;
+            const tId = typeof e.target === 'object' ? e.target.id : e.target;
+            return sId !== node.id && tId !== node.id;
+          });
+          showInfoPanel(targetNode, targetConnected);
+        }
+      });
+      listEl.appendChild(item);
+    });
+
+    panel.classList.add('open');
+  }
+
+  document.getElementById('closePanelBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearSelection();
+  });
+
+  // --- Search ---
+  const searchInput = document.getElementById('searchInput');
+  searchInput.addEventListener('input', function() {
+    const query = this.value.toLowerCase().trim();
+
+    if (!query) {
+      nodes.classed('dimmed', false);
+      edges.attr('stroke-opacity', 0.2);
+      return;
+    }
+
+    const matchingIds = new Set();
+    graphData.nodes.forEach(n => {
+      if (n.id.toLowerCase().includes(query) || n.type.toLowerCase().includes(query)) {
+        matchingIds.add(n.id);
+      }
+    });
+
+    // Also highlight their direct connections
+    const expandedIds = new Set(matchingIds);
+    matchingIds.forEach(id => {
+      const conn = adjacency.get(id);
+      if (conn) conn.forEach(c => expandedIds.add(c));
+    });
+
+    nodes.classed('dimmed', d => !expandedIds.has(d.id));
+    nodes.select('.node-circle')
+      .transition().duration(200)
+      .attr('fill-opacity', d => matchingIds.has(d.id) ? 0.5 : expandedIds.has(d.id) ? 0.25 : 0.2);
+
+    edges.attr('stroke-opacity', e => {
+      const sId = typeof e.source === 'object' ? e.source.id : e.source;
+      const tId = typeof e.target === 'object' ? e.target.id : e.target;
+      return (matchingIds.has(sId) || matchingIds.has(tId)) ? 0.4 : 0.03;
+    });
+  });
+
+  // --- Export PNG ---
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const svgEl = document.querySelector('#graph svg');
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svgEl);
+
+    const canvas = document.createElement('canvas');
+    const scale = 2;
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+
+    // Draw background
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(0, 0, width, height);
+
+    const img = new Image();
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+
+      // Watermark
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.font = '12px Inter, system-ui';
+      ctx.fillText('Shared Brain — Knowledge Graph', 20, height - 20);
+
+      const a = document.createElement('a');
+      a.download = (centerEntity || 'graph') + '-knowledge-graph.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.src = url;
+  });
+
+  // --- Simulation tick ---
+  simulation.on('tick', () => {
+    edges
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+
+    edgeLabels
+      .attr('x', d => (d.source.x + d.target.x) / 2)
+      .attr('y', d => (d.source.y + d.target.y) / 2);
+
+    nodes.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // --- Drag ---
+  function dragStarted(event, d) {
+    if (!event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+  }
+
+  function dragged(event, d) {
+    d.fx = event.x;
+    d.fy = event.y;
+  }
+
+  function dragEnded(event, d) {
+    if (!event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+  }
+
+  // --- UI setup ---
+  // Title badge
+  if (centerNode) {
+    const badge = document.getElementById('centerBadge');
+    badge.textContent = centerNode.type;
+    badge.style.color = getColor(centerNode.type);
+    badge.style.borderColor = getColor(centerNode.type) + '40';
+  }
+
+  // Node count
+  document.getElementById('nodeCount').textContent =
+    graphData.nodes.length + ' entities \u00B7 ' + graphData.edges.length + ' connections';
+
+  // Legend
+  const legendEl = document.getElementById('legend');
+  const typesInGraph = [...new Set(graphData.nodes.map(n => n.type))].sort();
+  typesInGraph.forEach(type => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<span class="legend-dot" style="background:${getColor(type)}"></span>${type}`;
+    legendEl.appendChild(item);
+  });
+
+  // Hide loading after simulation settles a bit
+  setTimeout(() => {
+    document.getElementById('loading').classList.add('hidden');
+  }, 800);
+
+  // Resize
+  window.addEventListener('resize', () => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    svg.attr('width', w).attr('height', h);
+  });
+
+  // Keyboard shortcut — Escape to clear
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      clearSelection();
+      searchInput.value = '';
+      searchInput.dispatchEvent(new Event('input'));
+    }
+    // Ctrl/Cmd + F to focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      searchInput.focus();
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
