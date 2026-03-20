@@ -193,12 +193,13 @@ export async function initClientResolver() {
     const clients = activeClients.map(row => {
       let fingerprints = null;
 
-      // Try to parse existing fingerprints field
-      if (row.fingerprints) {
+      // Try to parse existing fingerprints field (Baserow field: client_fingerprints)
+      const rawFp = row.client_fingerprints || row.fingerprints;
+      if (rawFp) {
         try {
-          fingerprints = typeof row.fingerprints === 'string'
-            ? JSON.parse(row.fingerprints)
-            : row.fingerprints;
+          fingerprints = typeof rawFp === 'string'
+            ? JSON.parse(rawFp)
+            : rawFp;
         } catch {
           // Invalid JSON — will auto-populate below
         }
