@@ -177,7 +177,9 @@ export function extractEntities(text, clientId, sourceAgent) {
  * Requires: createEntity, findEntity, linkEntityToMemory from stores/interface.js
  */
 export async function linkExtractedEntities(entities, memoryId, storeFns) {
-  const { createEntity, findEntity, linkEntityToMemory } = storeFns;
+  const { createEntity, findEntity, linkEntityToMemory, createRelationship } = storeFns;
+  const resolvedIds = [];
+
   for (const ent of entities) {
     let entityId = ent.entityId;
     if (!entityId) {
@@ -193,6 +195,23 @@ export async function linkExtractedEntities(entities, memoryId, storeFns) {
       // Bump mention count for known entity
       await createEntity({ canonical_name: ent.name, entity_type: ent.type });
     }
-    if (entityId) await linkEntityToMemory(entityId, memoryId, ent.role);
+    if (entityId) {
+      await linkEntityToMemory(entityId, memoryId, ent.role);
+      resolvedIds.push(entityId);
+    }
+  }
+
+  // Track co-occurrence: create relationships between all entity pairs in this memory
+  if (createRelationship && resolvedIds.length > 1) {
+    const uniqueIds = [...new Set(resolvedIds)];
+    for (let i = 0; i < uniqueIds.length; i++) {
+      for (let j = i + 1; j < uniqueIds.length; j++) {
+        try {
+          await createRelationship(uniqueIds[i], uniqueIds[j], 'co_occurrence');
+        } catch (e) {
+          // Non-blocking — don't fail entity linking over relationship tracking
+        }
+      }
+    }
   }
 }

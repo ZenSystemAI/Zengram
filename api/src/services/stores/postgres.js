@@ -81,6 +81,17 @@ export class PostgresStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS entity_relationships (
+        id SERIAL PRIMARY KEY,
+        source_entity_id INTEGER REFERENCES entities(id),
+        target_entity_id INTEGER REFERENCES entities(id),
+        relationship_type TEXT NOT NULL DEFAULT 'co_occurrence',
+        strength INTEGER DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(source_entity_id, target_entity_id, relationship_type)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
       CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(canonical_name);
       CREATE INDEX IF NOT EXISTS idx_ea_alias ON entity_aliases(alias);
@@ -88,6 +99,8 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_eml_entity ON entity_memory_links(entity_id);
       CREATE INDEX IF NOT EXISTS idx_eml_memory ON entity_memory_links(memory_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_eml_unique ON entity_memory_links(entity_id, memory_id, role);
+      CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_entity_id);
+      CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
     `);
 
     console.log(`[postgres] Database ready`);
@@ -270,5 +283,67 @@ export class PostgresStore {
     const byType = (await this.pool.query('SELECT entity_type, COUNT(*) as count FROM entities GROUP BY entity_type')).rows;
     const topMentioned = (await this.pool.query('SELECT canonical_name, entity_type, mention_count FROM entities ORDER BY mention_count DESC LIMIT 10')).rows;
     return { total: parseInt(total), by_type: Object.fromEntries(byType.map(r => [r.entity_type, parseInt(r.count)])), top_mentioned: topMentioned };
+  }
+
+  // --- Entity relationship methods ---
+
+  async createRelationship(sourceId, targetId, type = 'co_occurrence') {
+    const result = await this.pool.query(
+      `INSERT INTO entity_relationships (source_entity_id, target_entity_id, relationship_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (source_entity_id, target_entity_id, relationship_type)
+       DO UPDATE SET strength = entity_relationships.strength + 1, updated_at = NOW()
+       RETURNING id, strength`,
+      [sourceId, targetId, type]
+    );
+    return { id: result.rows[0].id, strength: result.rows[0].strength };
+  }
+
+  async getRelationships(entityId, minStrength = 1) {
+    const result = await this.pool.query(
+      `SELECT
+         CASE WHEN er.source_entity_id = $1 THEN e2.id ELSE e1.id END as entity_id,
+         CASE WHEN er.source_entity_id = $1 THEN e2.canonical_name ELSE e1.canonical_name END as entity_name,
+         CASE WHEN er.source_entity_id = $1 THEN e2.entity_type ELSE e1.entity_type END as entity_type,
+         er.relationship_type,
+         er.strength
+       FROM entity_relationships er
+       JOIN entities e1 ON e1.id = er.source_entity_id
+       JOIN entities e2 ON e2.id = er.target_entity_id
+       WHERE (er.source_entity_id = $1 OR er.target_entity_id = $1)
+         AND er.strength >= $2
+       ORDER BY er.strength DESC`,
+      [entityId, minStrength]
+    );
+    return result.rows.map(r => ({
+      entity: { id: r.entity_id, name: r.entity_name, type: r.entity_type },
+      relationship_type: r.relationship_type,
+      strength: r.strength,
+    }));
+  }
+
+  async listRelationships(filters = {}) {
+    let sql = `SELECT
+         e1.id as source_id, e1.canonical_name as source_name, e1.entity_type as source_type,
+         e2.id as target_id, e2.canonical_name as target_name, e2.entity_type as target_type,
+         er.relationship_type, er.strength
+       FROM entity_relationships er
+       JOIN entities e1 ON e1.id = er.source_entity_id
+       JOIN entities e2 ON e2.id = er.target_entity_id
+       WHERE 1=1`;
+    const params = [];
+    let i = 1;
+
+    if (filters.type) { sql += ` AND er.relationship_type = $${i++}`; params.push(filters.type); }
+    if (filters.min_strength) { sql += ` AND er.strength >= $${i++}`; params.push(parseInt(filters.min_strength)); }
+
+    sql += ' ORDER BY er.strength DESC LIMIT 100';
+    const result = await this.pool.query(sql, params);
+    return result.rows.map(r => ({
+      source: { id: r.source_id, name: r.source_name, type: r.source_type },
+      target: { id: r.target_id, name: r.target_name, type: r.target_type },
+      relationship_type: r.relationship_type,
+      strength: r.strength,
+    }));
   }
 }

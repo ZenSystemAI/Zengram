@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { embed } from '../services/embedders/interface.js';
 import { upsertPoint, findByPayload, updatePointPayload } from '../services/qdrant.js';
-import { createEvent, upsertStatus, isStoreAvailable, isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory } from '../services/stores/interface.js';
+import { createEvent, upsertStatus, isStoreAvailable, isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship } from '../services/stores/interface.js';
 import { scrubCredentials } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateClientId, MAX_OBSERVED_BY } from '../middleware/validate.js';
@@ -145,7 +145,7 @@ webhookRouter.post('/n8n', async (req, res) => {
     // Link entities (non-blocking)
     if (isEntityStoreAvailable() && extractedEntities.length > 0) {
       try {
-        await linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory });
+        await linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory, createRelationship });
       } catch (e) { console.error('[webhook:entities] Linking failed:', e.message); }
     }
 

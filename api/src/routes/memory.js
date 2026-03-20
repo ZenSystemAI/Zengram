@@ -7,7 +7,7 @@ import {
 } from '../services/qdrant.js';
 import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
-  isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory,
+  isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
 import { scrubCredentials, scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
@@ -173,7 +173,7 @@ memoryRouter.post('/', async (req, res) => {
     if (isEntityStoreAvailable() && extractedEntities.length > 0) {
       Promise.resolve().then(async () => {
         try {
-          await linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory });
+          await linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory, createRelationship });
         } catch (e) {
           console.error('[memory:entities] Linking failed:', e.message);
         }
