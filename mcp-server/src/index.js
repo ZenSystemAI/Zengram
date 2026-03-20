@@ -261,6 +261,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['memory_id'],
       },
     },
+    {
+      name: 'brain_client',
+      description: 'Get everything known about a client — brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "JL" resolves to "jetloans").',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          client: { type: 'string', description: 'Client ID or fuzzy name (resolved via fingerprints)' },
+          category: { type: 'string', enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship'], description: 'Filter by knowledge category (optional)' },
+          query: { type: 'string', description: 'Semantic search within this client\'s memories (optional — omit for full briefing)' },
+          format: { type: 'string', enum: ['compact', 'full'], description: 'compact (default) or full' },
+        },
+        required: ['client'],
+      },
+    },
   ],
 }));
 
@@ -366,6 +380,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (args.limit) params.append('limit', String(args.limit));
           result = await apiRequest(`/entities?${params}`);
         }
+        break;
+      }
+
+      case 'brain_client': {
+        const { client, category, query, format } = args;
+        const params = new URLSearchParams();
+        if (category) params.set('category', category);
+        if (query) params.set('query', query);
+        if (format) params.set('format', format);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        result = await apiRequest(`/client/${encodeURIComponent(client)}${qs}`);
         break;
       }
 
