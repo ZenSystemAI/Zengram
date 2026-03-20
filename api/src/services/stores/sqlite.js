@@ -97,6 +97,23 @@ export class SQLiteStore {
       CREATE INDEX IF NOT EXISTS idx_eml_memory ON entity_memory_links(memory_id);
     `);
 
+    // Entity relationships table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS entity_relationships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_entity_id INTEGER REFERENCES entities(id),
+        target_entity_id INTEGER REFERENCES entities(id),
+        relationship_type TEXT NOT NULL DEFAULT 'co_occurrence',
+        strength INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(source_entity_id, target_entity_id, relationship_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_entity_id);
+      CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
+    `);
+
     // Unique index for entity_memory_links (idempotent linking)
     try {
       this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_eml_unique ON entity_memory_links(entity_id, memory_id, role)`);
@@ -356,5 +373,73 @@ export class SQLiteStore {
     const byType = this.db.prepare('SELECT entity_type, COUNT(*) as count FROM entities GROUP BY entity_type').all();
     const topMentioned = this.db.prepare('SELECT canonical_name, entity_type, mention_count FROM entities ORDER BY mention_count DESC LIMIT 10').all();
     return { total, by_type: Object.fromEntries(byType.map(r => [r.entity_type, r.count])), top_mentioned: topMentioned };
+  }
+
+  // --- Entity relationship methods ---
+
+  createRelationship(sourceId, targetId, type = 'co_occurrence') {
+    const now = new Date().toISOString();
+    const existing = this.db.prepare(
+      'SELECT id, strength FROM entity_relationships WHERE source_entity_id = @source AND target_entity_id = @target AND relationship_type = @type'
+    ).get({ source: sourceId, target: targetId, type });
+
+    if (existing) {
+      this.db.prepare(
+        'UPDATE entity_relationships SET strength = strength + 1, updated_at = @now WHERE id = @id'
+      ).run({ now, id: existing.id });
+      return { id: existing.id, strength: existing.strength + 1 };
+    }
+
+    const result = this.db.prepare(
+      'INSERT INTO entity_relationships (source_entity_id, target_entity_id, relationship_type, strength, created_at, updated_at) VALUES (@source, @target, @type, 1, @now, @now)'
+    ).run({ source: sourceId, target: targetId, type, now });
+    return { id: result.lastInsertRowid, strength: 1 };
+  }
+
+  getRelationships(entityId, minStrength = 1) {
+    const results = this.db.prepare(
+      `SELECT
+         CASE WHEN er.source_entity_id = @entityId THEN e2.id ELSE e1.id END as entity_id,
+         CASE WHEN er.source_entity_id = @entityId THEN e2.canonical_name ELSE e1.canonical_name END as entity_name,
+         CASE WHEN er.source_entity_id = @entityId THEN e2.entity_type ELSE e1.entity_type END as entity_type,
+         er.relationship_type,
+         er.strength
+       FROM entity_relationships er
+       JOIN entities e1 ON e1.id = er.source_entity_id
+       JOIN entities e2 ON e2.id = er.target_entity_id
+       WHERE (er.source_entity_id = @entityId OR er.target_entity_id = @entityId)
+         AND er.strength >= @minStrength
+       ORDER BY er.strength DESC`
+    ).all({ entityId, minStrength });
+
+    return results.map(r => ({
+      entity: { id: r.entity_id, name: r.entity_name, type: r.entity_type },
+      relationship_type: r.relationship_type,
+      strength: r.strength,
+    }));
+  }
+
+  listRelationships(filters = {}) {
+    let sql = `SELECT
+         e1.id as source_id, e1.canonical_name as source_name, e1.entity_type as source_type,
+         e2.id as target_id, e2.canonical_name as target_name, e2.entity_type as target_type,
+         er.relationship_type, er.strength
+       FROM entity_relationships er
+       JOIN entities e1 ON e1.id = er.source_entity_id
+       JOIN entities e2 ON e2.id = er.target_entity_id
+       WHERE 1=1`;
+    const params = {};
+
+    if (filters.type) { sql += ' AND er.relationship_type = @type'; params.type = filters.type; }
+    if (filters.min_strength) { sql += ' AND er.strength >= @min_strength'; params.min_strength = parseInt(filters.min_strength); }
+
+    sql += ' ORDER BY er.strength DESC LIMIT 100';
+    const results = this.db.prepare(sql).all(params);
+    return results.map(r => ({
+      source: { id: r.source_id, name: r.source_name, type: r.source_type },
+      target: { id: r.target_id, name: r.target_name, type: r.target_type },
+      relationship_type: r.relationship_type,
+      strength: r.strength,
+    }));
   }
 }

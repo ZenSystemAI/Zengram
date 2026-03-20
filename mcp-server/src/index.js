@@ -244,6 +244,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'brain_graph',
+      description: 'Explore entity relationships in the knowledge graph. Returns connected entities with relationship types and strengths.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          entity: { type: 'string', description: 'Entity name to explore' },
+          depth: { type: 'number', description: 'Traversal depth (default 1, max 3)' },
+          min_strength: { type: 'number', description: 'Minimum relationship strength (default 1)' },
+        },
+        required: ['entity'],
+      },
+    },
+    {
       name: 'brain_delete',
       description: 'Soft-delete a memory by ID (marks it inactive). The memory remains in storage but is excluded from search results. Agent-scoped keys can only delete their own memories. Use this for compliance or to remove incorrect/sensitive memories.',
       inputSchema: {
@@ -336,6 +349,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           result = await apiRequest('/consolidate?sync=true', { method: 'POST' });
         }
         break;
+
+      case 'brain_graph': {
+        const params = new URLSearchParams();
+        if (args.depth) params.set('depth', args.depth);
+        if (args.min_strength) params.set('min_strength', args.min_strength);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        result = await apiRequest(`/graph/${encodeURIComponent(args.entity)}${qs}`);
+        break;
+      }
 
       case 'brain_delete':
         if (!args.memory_id) {

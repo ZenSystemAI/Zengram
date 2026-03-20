@@ -8,6 +8,7 @@ import { webhookRouter } from './routes/webhook.js';
 import { statsRouter } from './routes/stats.js';
 import { consolidationRouter } from './routes/consolidation.js';
 import { entitiesRouter } from './routes/entities.js';
+import { graphRouter } from './routes/graph.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases } from './services/stores/interface.js';
@@ -49,6 +50,7 @@ app.use('/briefing', briefingRouter);
 app.use('/webhook', webhookRouter);
 app.use('/consolidate', consolidationRouter);
 app.use('/entities', entitiesRouter);
+app.use('/graph', graphRouter);
 
 async function start() {
   try {
