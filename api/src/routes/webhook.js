@@ -123,6 +123,7 @@ webhookRouter.post('/n8n', async (req, res) => {
       client_id: client_id || 'global',
       category: 'episodic',
       importance: status === 'error' ? 'high' : 'medium',
+      knowledge_category: 'general',
       content_hash: contentHash,
       created_at: now,
       last_accessed_at: now,
@@ -159,6 +160,7 @@ webhookRouter.post('/n8n', async (req, res) => {
         client_id: client_id || 'global',
         category: 'episodic',
         importance: status === 'error' ? 'high' : 'medium',
+        knowledge_category: 'general',
         content_hash: contentHash,
         created_at: now,
       });

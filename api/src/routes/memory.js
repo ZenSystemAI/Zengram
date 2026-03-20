@@ -18,7 +18,7 @@ export const memoryRouter = Router();
 // POST /memory — Store a memory
 memoryRouter.post('/', async (req, res) => {
   try {
-    const { type, content, source_agent, client_id, category, importance, metadata } = req.body;
+    const { type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = req.body;
 
     // Validate all input fields
     const validationError = validateMemoryInput(req.body);
@@ -140,6 +140,7 @@ memoryRouter.post('/', async (req, res) => {
       client_id: client_id || 'global',
       category: category || 'episodic',
       importance: importance || 'medium',
+      knowledge_category: knowledge_category || 'general',
       content_hash: contentHash,
       created_at: now,
       last_accessed_at: now,
@@ -187,6 +188,7 @@ memoryRouter.post('/', async (req, res) => {
       client_id: client_id || 'global',
       category: category || 'episodic',
       importance: importance || 'medium',
+      knowledge_category: knowledge_category || 'general',
       content_hash: contentHash,
       created_at: now,
     };

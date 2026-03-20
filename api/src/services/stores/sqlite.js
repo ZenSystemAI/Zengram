@@ -27,6 +27,7 @@ export class SQLiteStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'episodic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TEXT NOT NULL
       );
@@ -40,6 +41,7 @@ export class SQLiteStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'semantic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -53,6 +55,7 @@ export class SQLiteStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'episodic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -111,8 +114,8 @@ export class SQLiteStore {
 
   createEvent(data) {
     const stmt = this.db.prepare(`
-      INSERT INTO events (content, type, source_agent, client_id, category, importance, content_hash, created_at)
-      VALUES (@content, @type, @source_agent, @client_id, @category, @importance, @content_hash, @created_at)
+      INSERT INTO events (content, type, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at)
+      VALUES (@content, @type, @source_agent, @client_id, @category, @importance, @knowledge_category, @content_hash, @created_at)
     `);
     const result = stmt.run({
       content: data.content,
@@ -121,6 +124,7 @@ export class SQLiteStore {
       client_id: data.client_id || 'global',
       category: data.category || 'episodic',
       importance: data.importance || 'medium',
+      knowledge_category: data.knowledge_category || 'general',
       content_hash: data.content_hash || null,
       created_at: data.created_at || new Date().toISOString(),
     });
@@ -149,7 +153,7 @@ export class SQLiteStore {
       this.db.prepare(`
         UPDATE facts SET value = @value, content = @content, source_agent = @source_agent,
         client_id = @client_id, category = @category, importance = @importance,
-        content_hash = @content_hash, updated_at = @updated_at WHERE key = @key
+        knowledge_category = @knowledge_category, content_hash = @content_hash, updated_at = @updated_at WHERE key = @key
       `).run({
         key: data.key,
         value: data.value || data.content,
@@ -158,6 +162,7 @@ export class SQLiteStore {
         client_id: data.client_id || 'global',
         category: data.category || 'semantic',
         importance: data.importance || 'medium',
+        knowledge_category: data.knowledge_category || 'general',
         content_hash: data.content_hash || null,
         updated_at: now,
       });
@@ -165,8 +170,8 @@ export class SQLiteStore {
     }
 
     const result = this.db.prepare(`
-      INSERT INTO facts (key, value, content, source_agent, client_id, category, importance, content_hash, created_at, updated_at)
-      VALUES (@key, @value, @content, @source_agent, @client_id, @category, @importance, @content_hash, @created_at, @updated_at)
+      INSERT INTO facts (key, value, content, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
+      VALUES (@key, @value, @content, @source_agent, @client_id, @category, @importance, @knowledge_category, @content_hash, @created_at, @updated_at)
     `).run({
       key: data.key,
       value: data.value || data.content,
@@ -175,6 +180,7 @@ export class SQLiteStore {
       client_id: data.client_id || 'global',
       category: data.category || 'semantic',
       importance: data.importance || 'medium',
+      knowledge_category: data.knowledge_category || 'general',
       content_hash: data.content_hash || null,
       created_at: data.created_at || now,
       updated_at: now,
@@ -204,7 +210,7 @@ export class SQLiteStore {
       this.db.prepare(`
         UPDATE statuses SET status = @status, source_agent = @source_agent,
         client_id = @client_id, category = @category, importance = @importance,
-        content_hash = @content_hash, updated_at = @updated_at WHERE subject = @subject
+        knowledge_category = @knowledge_category, content_hash = @content_hash, updated_at = @updated_at WHERE subject = @subject
       `).run({
         subject: data.subject,
         status: data.status,
@@ -212,6 +218,7 @@ export class SQLiteStore {
         client_id: data.client_id || 'global',
         category: data.category || 'episodic',
         importance: data.importance || 'medium',
+        knowledge_category: data.knowledge_category || 'general',
         content_hash: data.content_hash || null,
         updated_at: now,
       });
@@ -219,8 +226,8 @@ export class SQLiteStore {
     }
 
     const result = this.db.prepare(`
-      INSERT INTO statuses (subject, status, source_agent, client_id, category, importance, content_hash, created_at, updated_at)
-      VALUES (@subject, @status, @source_agent, @client_id, @category, @importance, @content_hash, @created_at, @updated_at)
+      INSERT INTO statuses (subject, status, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
+      VALUES (@subject, @status, @source_agent, @client_id, @category, @importance, @knowledge_category, @content_hash, @created_at, @updated_at)
     `).run({
       subject: data.subject,
       status: data.status,
@@ -228,6 +235,7 @@ export class SQLiteStore {
       client_id: data.client_id || 'global',
       category: data.category || 'episodic',
       importance: data.importance || 'medium',
+      knowledge_category: data.knowledge_category || 'general',
       content_hash: data.content_hash || null,
       created_at: data.created_at || now,
       updated_at: now,

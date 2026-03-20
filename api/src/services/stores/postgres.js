@@ -19,6 +19,7 @@ export class PostgresStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'episodic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -32,6 +33,7 @@ export class PostgresStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'semantic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -45,6 +47,7 @@ export class PostgresStore {
         client_id TEXT DEFAULT 'global',
         category TEXT DEFAULT 'episodic',
         importance TEXT DEFAULT 'medium',
+        knowledge_category TEXT DEFAULT 'general',
         content_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -95,11 +98,11 @@ export class PostgresStore {
 
   async createEvent(data) {
     const result = await this.pool.query(
-      `INSERT INTO events (content, type, source_agent, client_id, category, importance, content_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      `INSERT INTO events (content, type, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
       [data.content, data.type || 'event', data.source_agent, data.client_id || 'global',
-       data.category || 'episodic', data.importance || 'medium', data.content_hash,
-       data.created_at || new Date().toISOString()]
+       data.category || 'episodic', data.importance || 'medium', data.knowledge_category || 'general',
+       data.content_hash, data.created_at || new Date().toISOString()]
     );
     return { id: result.rows[0].id };
   }
@@ -122,16 +125,16 @@ export class PostgresStore {
   async upsertFact(data) {
     const now = new Date().toISOString();
     const result = await this.pool.query(
-      `INSERT INTO facts (key, value, content, source_agent, client_id, category, importance, content_hash, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO facts (key, value, content, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (key) DO UPDATE SET
          value = EXCLUDED.value, content = EXCLUDED.content, source_agent = EXCLUDED.source_agent,
          client_id = EXCLUDED.client_id, category = EXCLUDED.category, importance = EXCLUDED.importance,
-         content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at
+         knowledge_category = EXCLUDED.knowledge_category, content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at
        RETURNING id`,
       [data.key, data.value || data.content, data.content, data.source_agent,
        data.client_id || 'global', data.category || 'semantic', data.importance || 'medium',
-       data.content_hash, data.created_at || now, now]
+       data.knowledge_category || 'general', data.content_hash, data.created_at || now, now]
     );
     return { id: result.rows[0].id };
   }
@@ -154,16 +157,16 @@ export class PostgresStore {
   async upsertStatus(data) {
     const now = new Date().toISOString();
     const result = await this.pool.query(
-      `INSERT INTO statuses (subject, status, source_agent, client_id, category, importance, content_hash, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO statuses (subject, status, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (subject) DO UPDATE SET
          status = EXCLUDED.status, source_agent = EXCLUDED.source_agent,
          client_id = EXCLUDED.client_id, category = EXCLUDED.category, importance = EXCLUDED.importance,
-         content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at
+         knowledge_category = EXCLUDED.knowledge_category, content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at
        RETURNING id`,
       [data.subject, data.status, data.source_agent, data.client_id || 'global',
-       data.category || 'episodic', data.importance || 'medium', data.content_hash,
-       data.created_at || now, now]
+       data.category || 'episodic', data.importance || 'medium', data.knowledge_category || 'general',
+       data.content_hash, data.created_at || now, now]
     );
     return { id: result.rows[0].id };
   }

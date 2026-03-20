@@ -58,7 +58,7 @@ export async function initQdrant() {
   });
 
   // Create payload indices for common filters
-  const keywordFields = ['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject'];
+  const keywordFields = ['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject', 'knowledge_category'];
   for (const field of keywordFields) {
     await qdrantRequest(`/collections/${COLLECTION}/index`, {
       method: 'PUT',
