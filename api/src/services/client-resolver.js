@@ -185,7 +185,7 @@ export async function initClientResolver() {
     // Filter: rows where client_id exists and active is true
     const activeClients = rows.filter(row => {
       const hasClientId = row.client_id && String(row.client_id).trim() !== '';
-      const isActive = row.active === true || row.active === 'true' || row.active === 1;
+      const isActive = row.active === true || row.active === 'true' || row.active === 1 || (row.status && (row.status.value === 'active' || row.status === 'active'));
       return hasClientId && isActive;
     });
 
