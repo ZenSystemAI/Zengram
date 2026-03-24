@@ -59,7 +59,16 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(key);
       CREATE INDEX IF NOT EXISTS idx_facts_client ON facts(client_id);
       CREATE INDEX IF NOT EXISTS idx_statuses_subject ON statuses(subject);
+    `);
 
+    // Migrate: add knowledge_category to existing tables (safe if already exists)
+    for (const table of ['events', 'facts', 'statuses']) {
+      try {
+        await this.pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS knowledge_category TEXT DEFAULT 'general'`);
+      } catch (_) { /* column already exists */ }
+    }
+
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS entities (
         id SERIAL PRIMARY KEY,
         canonical_name TEXT UNIQUE NOT NULL,

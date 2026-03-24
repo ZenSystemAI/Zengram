@@ -125,14 +125,33 @@ briefingRouter.get('/', async (req, res) => {
       arr.sort(sortByImportanceAndDate);
     }
 
+    // Build response based on format
     const briefing = {
       since,
       format,
       requesting_agent: agent || 'unknown',
       generated_at: new Date().toISOString(),
       summary,
-      ...buckets,
     };
+
+    if (format === 'summary') {
+      // Summary: counts + top 5 headlines per bucket — minimal tokens
+      const topN = 5;
+      briefing.top_events = buckets.events.slice(0, topN).map(e => ({ headline: e.headline, source_agent: e.source_agent, client_id: e.client_id, created_at: e.created_at }));
+      briefing.top_facts = buckets.facts_updated.slice(0, topN).map(e => ({ headline: e.headline, source_agent: e.source_agent, client_id: e.client_id }));
+      briefing.top_statuses = buckets.status_changes.slice(0, topN).map(e => ({ headline: e.headline, source_agent: e.source_agent, client_id: e.client_id }));
+      briefing.top_decisions = buckets.decisions.slice(0, topN).map(e => ({ headline: e.headline, source_agent: e.source_agent, client_id: e.client_id }));
+    } else if (format === 'compact') {
+      // Compact: truncated entries, capped at 15 per bucket
+      const cap = 15;
+      briefing.events = buckets.events.slice(0, cap);
+      briefing.facts_updated = buckets.facts_updated.slice(0, cap);
+      briefing.status_changes = buckets.status_changes.slice(0, cap);
+      briefing.decisions = buckets.decisions.slice(0, cap);
+    } else {
+      // Full: all entries, complete content
+      Object.assign(briefing, buckets);
+    }
 
     // Collection stats (compact/full only — skip for summary to save tokens)
     if (format !== 'summary') {
