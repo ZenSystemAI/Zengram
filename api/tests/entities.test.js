@@ -230,3 +230,105 @@ describe('alias cache cold-start', () => {
     assert.equal(docker.entityId, 7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. Noise filtering — quoted names
+// ---------------------------------------------------------------------------
+
+describe('extractEntities — noise filtering (quoted names)', () => {
+  beforeEach(() => {
+    loadAliasCache([]);
+  });
+
+  it('rejects CSS-like hyphenated names', () => {
+    const text = 'Set "background-image" and "object-position" and "flex-wrap" on the element';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('background-image'));
+    assert.ok(!names.includes('object-position'));
+    assert.ok(!names.includes('flex-wrap'));
+  });
+
+  it('rejects HTML data attributes', () => {
+    const text = 'Added "data-en" and "data-fr" and "data-faq" attributes';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('data-en'));
+    assert.ok(!names.includes('data-fr'));
+    assert.ok(!names.includes('data-faq'));
+  });
+
+  it('rejects camelCase code identifiers', () => {
+    const text = 'Updated "searchInput" and "fieldsToUpdate" variables';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('searchInput'));
+    assert.ok(!names.includes('fieldsToUpdate'));
+  });
+
+  it('rejects shell commands', () => {
+    const text = 'Run "docker compose up -d --force-recreate" to restart';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.some(n => n.includes('docker compose')));
+  });
+
+  it('rejects error codes and log messages', () => {
+    const text = 'Got "ERROR_TOKEN_DOES_NOT_EXIST" and "Failed to start audit"';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('ERROR_TOKEN_DOES_NOT_EXIST'));
+    assert.ok(!names.includes('Failed to start audit'));
+  });
+
+  it('rejects single lowercase words', () => {
+    const text = 'Set "active" and "channel" and "last" flags';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('active'));
+    assert.ok(!names.includes('channel'));
+    assert.ok(!names.includes('last'));
+  });
+
+  it('keeps legitimate quoted workflow names', () => {
+    const text = 'Updated the "SEO Monthly Snapshot" and "Client Onboarding" workflows';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(names.includes('SEO Monthly Snapshot'));
+    assert.ok(names.includes('Client Onboarding'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Noise filtering — capitalized phrases
+// ---------------------------------------------------------------------------
+
+describe('extractEntities — noise filtering (capitalized phrases)', () => {
+  beforeEach(() => {
+    loadAliasCache([]);
+  });
+
+  it('rejects generic adjective + noun phrases', () => {
+    const text = 'Checked the Exposed Qdrant and Audited Neo and Electric Violet configs';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('Exposed Qdrant'));
+    assert.ok(!names.includes('Audited Neo'));
+    assert.ok(!names.includes('Electric Violet'));
+  });
+
+  it('rejects phrases with 5+ words', () => {
+    const text = 'The Quick Brown Fox Jumped Over Lazy Dogs';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(!names.includes('Quick Brown Fox Jumped Over'));
+  });
+
+  it('keeps known system names', () => {
+    const text = 'Deployed Mission Center and Knowledge Base updates';
+    const entities = extractEntities(text, 'global', 'test');
+    const names = entities.map(e => e.name);
+    assert.ok(names.includes('Mission Center'));
+    assert.ok(names.includes('Knowledge Base'));
+  });
+});

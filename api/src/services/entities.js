@@ -34,7 +34,7 @@ const CAPITALIZED_PHRASE_REGEX = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+)\b/g;
 
 // Known system/product names — maps to correct entity type
 const KNOWN_SYSTEMS = {
-  'agency system': 'workflow', 'mission center': 'system',
+  'agency system': 'system', 'mission center': 'system',
   'shared brain': 'system', 'antigravity studio': 'system',
   'prism hub': 'system', 'neo studio': 'system',
   'site settings': 'system',
@@ -137,8 +137,30 @@ function isJunkPhrase(phrase) {
     'Node', 'Fix', 'Issue', 'Error', 'Check', 'Test', 'Pass', 'Fail',
     'Mode', 'Type', 'Data', 'Item', 'List', 'View', 'Page', 'File',
     'Phase', 'Step', 'Task', 'Flow', 'Loop', 'Gate', 'Rule', 'Note',
+    'Model', 'Level', 'Class', 'Style', 'State', 'Value', 'Field',
+    'Port', 'Path', 'Host', 'Name', 'Code', 'Part', 'Line', 'Text',
+    'Info', 'Link', 'Flag', 'Sign', 'Icon', 'Form', 'Case', 'Tier',
+    'Plan', 'Rate', 'Tool', 'Work', 'Time', 'Size', 'Side', 'Body',
+    'Base', 'Card', 'Grid', 'Slot', 'Band', 'Ring', 'Call', 'Send',
+    'Load', 'Save', 'Menu', 'Hash', 'Sort', 'Swap', 'Pull', 'Push',
   ]);
   if (words.length === 2 && GENERIC_TAIL.has(words[1])) return true;
+
+  // Skip 2-word phrases where first word is a generic adjective
+  const GENERIC_HEAD = new Set([
+    'New', 'Old', 'Big', 'Raw', 'Hot', 'Top', 'Low', 'Bad', 'Red',
+    'Full', 'Next', 'Last', 'Main', 'Real', 'Live', 'Dead', 'Deep',
+    'High', 'Long', 'Dark', 'Fast', 'Slow', 'Hard', 'Soft', 'Good',
+    'True', 'Auto', 'Open', 'Free', 'Pure', 'Safe', 'Dual', 'Half',
+    'Audited', 'Exposed', 'Persistent', 'Electric', 'Curated',
+  ]);
+  if (words.length === 2 && GENERIC_HEAD.has(words[0])) return true;
+
+  // Skip phrases that are too long (5+ words are almost always prose)
+  if (words.length >= 5) return true;
+
+  // Skip phrases containing lowercase connecting words (likely prose)
+  if (words.some(w => /^(and|or|the|a|an|of|in|on|at|to|for|with|by|from|is|are|was|not|but)$/i.test(w) && w[0] === w[0].toLowerCase())) return true;
 
   return false;
 }
@@ -151,11 +173,53 @@ function isJunkQuotedName(name) {
   if (/^[:.]/.test(name)) return true;           // :root, .class
   if (/^--/.test(name)) return true;             // CSS variable
   if (/^</.test(name)) return true;              // HTML tag
-  if (/[/\\]/.test(name)) return true;           // file path
-  if (/[{}();=]/.test(name)) return true;        // code
+  if (/[/\\%~]/.test(name)) return true;         // file path or env var
+  if (/[{}();=\[\]|&$@]/.test(name)) return true; // code / shell
   if (/^#[0-9a-fA-F]+$/.test(name)) return true; // hex color
   if (/^[\d\s.,!?-]+$/.test(name)) return true;  // numbers/punctuation
   if (name.length < 3) return true;
+
+  // Hyphenated lowercase — CSS properties, HTML data attrs, CLI flags
+  if (/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(name)) return true;
+
+  // camelCase or snake_case identifiers
+  if (/^[a-z][a-zA-Z0-9]*[A-Z]/.test(name)) return true;   // camelCase
+  if (/^[a-z_]+_[a-z_]+$/.test(name)) return true;          // snake_case
+
+  // Shell commands (starts with common commands)
+  if (/^(docker|git|npm|ssh|curl|cd|ls|rm|cp|mv|mkdir|chmod|sudo|pip|node|bun)\s/i.test(name)) return true;
+
+  // Error codes, log messages
+  if (/^(ERROR|WARN|INFO|DEBUG|FAIL|OK|TRUE|FALSE)/.test(name)) return true;
+  if (/^(Prompt|Failed|Ignored|Should)\s/i.test(name)) return true;
+
+  // Very short single words (not in alias cache — checked later)
+  if (!/\s/.test(name) && name.length < 5) return true;
+
+  // Sentence fragments — contains lowercase words that indicate prose, not names
+  const words = name.split(/\s+/);
+  const PROSE_WORDS = new Set([
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
+    'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+    'into', 'through', 'during', 'before', 'after', 'above', 'below',
+    'between', 'under', 'not', 'no', 'nor', 'but', 'or', 'and', 'if',
+    'then', 'than', 'so', 'that', 'this', 'these', 'those', 'it', 'its',
+    'my', 'your', 'his', 'her', 'our', 'their', 'what', 'which', 'who',
+    'whom', 'how', 'when', 'where', 'why', 'all', 'each', 'every',
+    // French prose words
+    'le', 'la', 'les', 'un', 'une', 'des', 'du', 'de', 'au', 'aux',
+    'et', 'ou', 'en', 'est', 'sont', 'par', 'pour', 'sur', 'avec',
+    'dans', 'sans', 'pas', 'plus', 'très', 'aussi', 'bien', 'tout',
+  ]);
+  // If more than 40% of words are prose words, it's a sentence fragment
+  const proseCount = words.filter(w => PROSE_WORDS.has(w.toLowerCase())).length;
+  if (words.length >= 3 && proseCount / words.length > 0.4) return true;
+
+  // Single lowercase word (not a known entity)
+  if (words.length === 1 && /^[a-z]/.test(name)) return true;
+
   return false;
 }
 
