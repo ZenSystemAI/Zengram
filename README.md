@@ -30,15 +30,16 @@
 
 Born from a production setup where [OpenClaw](https://github.com/openclaw/openclaw) agents, Claude Code, and n8n workflows needed to share memory across separate machines. Nothing existed that did this well, so we built it.
 
-### What's New in v2.0
+### What's New in v2.2
 
+- **Noise-Free Entity Extraction** — v2.2 filters out CSS properties, code identifiers, shell commands, sentence fragments, French prose, and generic phrases. Pattern-based filtering with 50+ generic noun/adjective blocklists. Includes a retroactive cleanup script (`scripts/cleanup-garbage-entities.js`) to purge existing noise.
 - **Per-Client Knowledge Base** — Fingerprint-based client identification with accent normalization. One tool call (`brain_client`) returns everything known about a client: brand, strategy, meetings, content, technical details, relationships. Fuzzy name resolution ("JL" resolves to "jetloans").
 - **Gemini Embedding 2** — Task-type-aware embeddings at 3072 dimensions. Uses `RETRIEVAL_DOCUMENT` for storage, `RETRIEVAL_QUERY` for search. Matryoshka support for flexible dimensionality (3072/1536/768).
 - **Import/Export** — Full backup and migration support. Export all memories as JSON, import with automatic deduplication. Never lose data when switching embedding providers again.
 - **Webhook Notifications** — Real-time dispatch when memories are stored, superseded, or deleted. Fire-and-forget to any HTTP endpoint.
-- **Entity Relationship Graph** — Track how entities connect through co-occurrence. Interactive D3.js visualization with dark theme, force-directed layout, search, and PNG export — a showpiece you can share with clients.
+- **Entity Relationship Graph** — Track how entities connect through co-occurrence. Interactive D3.js visualization with dark theme, force-directed layout, search, and PNG export.
 - **Auto-Resolve Client Context** — Memories without explicit client_id are automatically tagged using fingerprint matching against the content.
-- **Smarter Consolidation** — The 6-hour LLM pass now reclassifies knowledge categories and infers entity relationship types (contact_of, same_owner, uses, works_on, competitor_of).
+- **Smarter Consolidation** — The 6-hour LLM pass reclassifies knowledge categories and infers entity relationship types (contact_of, same_owner, uses, works_on, competitor_of). Supports OpenAI, Anthropic, Gemini, and Ollama as consolidation LLM providers.
 
 <p align="center">
   <img src=".github/shared memory.jpg" alt="Shared Memory Architecture" width="340" />
@@ -122,7 +123,7 @@ Store ──> Dedup Check ──> Supersedes Chain ──> Confidence Decay ─�
 
 Every memory automatically extracts named entities at storage time — clients, technologies, workflows, people, domains, and agents. Two extraction paths compound over time:
 
-- **Fast path (every write)** — Regex + known-tech dictionary + alias cache lookup. Sub-millisecond, no LLM call, non-blocking. Always extracts `client_id` and `source_agent` as entities. Catches technology names (40+ built-in), domain names, quoted references, and capitalized proper nouns.
+- **Fast path (every write)** — Regex + known-tech dictionary + alias cache lookup. Sub-millisecond, no LLM call, non-blocking. Always extracts `client_id` and `source_agent` as entities. Catches technology names (70+ built-in), domain names, quoted references, and capitalized proper nouns. v2.2 adds aggressive noise filtering: rejects CSS properties, HTML attributes, camelCase/snake_case code identifiers, shell commands, error codes, sentence fragments, and generic adjective+noun phrases.
 - **Smart path (every consolidation)** — The LLM discovers entities regex missed, normalizes aliases (so "acme-corp", "ACME", and "Acme Corporation" resolve to one canonical entity), and classifies types. Discovered aliases feed back into the fast-path alias cache — extraction gets smarter over time.
 
 Entities are stored in three structured DB tables (SQLite/Postgres): canonical entities, aliases, and memory links. Each Qdrant memory payload is enriched with an `entities` array, indexed for native vector-filtered search — `GET /memory/search?entity=Docker` filters at the Qdrant level with no result-count ceiling.
@@ -210,16 +211,9 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 │  GET /client/:name  GET /export  POST /import  GET /graph                 │
 ├──────────────────────┬────────────────────────────────────────────────────┤
 │   Embedding Layer    │            LLM Layer                               │
-<<<<<<< HEAD
 │  ┌────────┐ ┌──────┐ ┌──────┐│  ┌────────┐ ┌───────────┐ ┌──────┐ ┌──────┐│
 │  │ OpenAI │ │Gemini│ │Ollama││  │ OpenAI │ │ Anthropic │ │Gemini│ │Ollama││
 │  └────────┘ └──────┘ └──────┘│  └────────┘ └───────────┘ └──────┘ └──────┘│
-=======
-│  ┌────────┐ ┌──────┐│  ┌────────┐ ┌───────────┐ ┌──────┐ ┌──────┐      │
-│  │ OpenAI │ │Gemini││  │ OpenAI │ │ Anthropic │ │Gemini│ │Ollama│      │
-│  │        │ │Ollama││  └────────┘ └───────────┘ └──────┘ └──────┘      │
-│  └────────┘ └──────┘│                                                    │
->>>>>>> worktree-agent-a1f30793
 ├──────────────────────┴────────────────────────────────────────────────────┤
 │                          Storage Layer                                    │
 │  ┌────────────────────┐  ┌────────┐ ┌────────┐ ┌───────┐                │
@@ -639,13 +633,8 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `EMBEDDING_PROVIDER` | `openai` | `openai`, `gemini`, or `ollama` |
 | `OPENAI_API_KEY` | — | Required when using OpenAI embeddings |
 | `GEMINI_API_KEY` | — | Required when using Gemini embeddings |
-<<<<<<< HEAD
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2-preview` | Gemini embedding model name |
 | `GEMINI_EMBEDDING_DIMS` | `3072` | Output dimensions (3072, 1536, or 768 via Matryoshka) |
-=======
-| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-exp-03-07` | Gemini embedding model |
-| `GEMINI_EMBEDDING_DIMS` | `3072` | Output dimensions (3072, 1536, or 768 — Matryoshka support) |
->>>>>>> worktree-agent-a1f30793
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `nomic-embed-text` | Ollama embedding model name |
 
@@ -804,11 +793,13 @@ multi-agent-memory/
 
 ## Roadmap
 
-**Shipped in v2.0:**
-- ~~Entity relationships + graph~~ — Done
-- ~~Import/Export~~ — Done
-- ~~Webhook notifications~~ — Done
-- ~~Client knowledge base~~ — Done
+**Shipped:**
+- ~~Entity relationships + graph~~ — v2.0
+- ~~Import/Export~~ — v2.0
+- ~~Webhook notifications~~ — v2.0
+- ~~Client knowledge base~~ — v2.0
+- ~~Noise-free entity extraction~~ — v2.2
+- ~~Garbage entity cleanup tooling~~ — v2.2
 
 **Coming next:**
 - **Web dashboard** — Browse, search, and manage memories visually
@@ -816,6 +807,7 @@ multi-agent-memory/
 - **Automatic memory capture** — System learns what's worth remembering vs what's noise
 - **Multi-collection support** — Isolated memory spaces per project or team
 - **SSE/WebSocket subscriptions** — Real-time streaming for agents to subscribe to memory updates
+- **Entity type reclassification** — Batch fix mistyped entities from early extraction
 
 ## Contributing
 
