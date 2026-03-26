@@ -1,8 +1,8 @@
 {
   "name": "@zensystemai/multi-agent-memory-mcp",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "type": "module",
-  "description": "Persistent semantic memory across AI agents — credential scrubbing, auto-consolidation, multi-backend storage (Qdrant + SQLite/Postgres/Baserow)",
+  "description": "Persistent multi-path memory for AI agents — vector + BM25 keyword + entity graph search with RRF fusion, credential scrubbing, auto-consolidation, multi-backend storage (Qdrant + SQLite/Postgres)",
   "main": "src/index.js",
   "bin": {
     "multi-agent-memory-mcp": "src/index.js"
@@ -23,6 +23,12 @@
     "multi-agent",
     "llm",
     "semantic-search",
+    "bm25",
+    "keyword-search",
+    "reciprocal-rank-fusion",
+    "rrf",
+    "knowledge-graph",
+    "entity-extraction",
     "persistent-memory",
     "cross-agent",
     "knowledge-base",

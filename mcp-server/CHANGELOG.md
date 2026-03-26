@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.3.0 (2026-03-26)
+
+### Multi-Path Retrieval with RRF Fusion
+
+Search now runs three retrieval paths in parallel and merges results using Reciprocal Rank Fusion — dramatically improving recall for exact names, technical terms, and entity-connected memories.
+
+#### New Retrieval Paths
+- **BM25 keyword search** — Full-text search via Postgres tsvector/GIN index or SQLite FTS5 fallback. Catches exact term matches that embedding similarity misses (client names, technical terms, error codes).
+- **Entity graph BFS retrieval** — Breadth-first spreading activation through the entity relationship graph. Starts from entities mentioned in the query, traverses co-occurrence and typed relationships (uses, works_on, contact_of) with configurable activation decay. Surfaces memories connected by entity relationships, not just text similarity.
+- **Reciprocal Rank Fusion (RRF)** — Merges ranked lists from all three paths using `score(d) = sum(1/(k+rank))`. Items found by multiple paths get boosted. Pure JS, zero dependencies.
+
+#### New Files
+- `api/src/services/rrf.js` — RRF fusion algorithm with 13 unit tests
+- `api/src/services/keyword-search.js` — BM25/FTS keyword search service
+- `api/src/services/graph-search.js` — BFS spreading activation graph retrieval
+- `api/scripts/backfill-keyword-index.js` — One-time migration for existing memories
+- `api/tests/rrf.test.js` — Comprehensive test suite (edge cases, score verification, 3-path scenarios)
+
+#### API Changes
+- `GET /memory/search` runs all 3 paths via `Promise.all()`, fuses with RRF
+- `format=full` results include `retrieval_sources` array showing which paths contributed (e.g. `["vector", "keyword", "graph"]`)
+- `format=full` response includes `retrieval` metadata with per-path hit counts
+- `POST /memory` indexes content for keyword search on write (fire-and-forget)
+- `DELETE /memory/:id` and supersede logic deactivate keyword index entries
+- `GET /stats` includes `retrieval` section with keyword index count and path availability
+
+#### MCP Tool Updates
+- `brain_search` description updated to reflect multi-path retrieval
+
+#### Schema Changes
+- **Postgres**: `memory_search` table with tsvector column, GIN index, auto-compute trigger. Partial indexes on `entity_relationships` for co-occurrence lookups.
+- **SQLite**: FTS5 virtual table `memory_search_fts` for keyword search fallback.
+- **Qdrant**: `getPoints()` batch retrieval endpoint for RRF payload hydration.
+
+#### Configuration
+- `MULTI_PATH_SEARCH=true|false` — Feature flag (default: true)
+- `RRF_K=60` — RRF smoothing constant (range 50-100)
+- `GRAPH_SEARCH_MAX_DEPTH=2` — Max BFS hops through entity graph
+- `GRAPH_SEARCH_DECAY=0.8` — Activation decay per hop
+- `GRAPH_SEARCH_CAUSAL_BOOST=2.0` — Boost for typed relationships vs co_occurrence
+
+#### Testing
+- 13 new RRF unit tests, 114 total tests passing
+
+Inspired by [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight)'s 4-way parallel search architecture.
+
 ## 2.0.0 (2026-03-20)
 
 ### Features
