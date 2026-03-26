@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { getMemoryStats, scrollPoints, computeEffectiveConfidence, DECAY_TYPES } from '../services/qdrant.js';
 import { isEntityStoreAvailable, getEntityStats } from '../services/stores/interface.js';
+import { isKeywordSearchAvailable, getKeywordIndexCount } from '../services/keyword-search.js';
+import { isGraphSearchAvailable } from '../services/graph-search.js';
 
 export const statsRouter = Router();
 
@@ -30,6 +32,14 @@ statsRouter.get('/', async (req, res) => {
       } catch (e) { /* non-critical */ }
     }
 
+    // Keyword search stats
+    let keywordIndexCount = 0;
+    if (isKeywordSearchAvailable()) {
+      try {
+        keywordIndexCount = await getKeywordIndexCount();
+      } catch (e) { /* non-critical */ }
+    }
+
     res.json({
       ...stats,
       decayed_below_50pct: decayedCount,
@@ -38,6 +48,12 @@ statsRouter.get('/', async (req, res) => {
         affected_types: DECAY_TYPES,
       },
       ...(entityStats ? { entities: entityStats } : {}),
+      retrieval: {
+        multi_path: process.env.MULTI_PATH_SEARCH !== 'false',
+        keyword_search: isKeywordSearchAvailable(),
+        keyword_index_count: keywordIndexCount,
+        graph_search: isGraphSearchAvailable(),
+      },
     });
   } catch (err) {
     console.error('[stats] Error:', err.message);

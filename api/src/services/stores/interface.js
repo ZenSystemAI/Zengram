@@ -125,7 +125,11 @@ export async function listRelationships(filters) {
   return requireStore().listRelationships(filters);
 }
 
-// Direct store access (used by graph visualization for co-occurrence queries)
+// Direct store access (used by graph visualization, keyword search init)
 export function _getStoreInstance() {
   return store;
+}
+
+export function getBackendType() {
+  return BACKEND;
 }

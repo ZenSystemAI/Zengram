@@ -30,7 +30,11 @@
 
 Born from a production setup where [OpenClaw](https://github.com/openclaw/openclaw) agents, Claude Code, and n8n workflows needed to share memory across separate machines. Nothing existed that did this well, so we built it.
 
-### What's New in v2.2
+### What's New in v2.3
+
+- **Multi-Path Retrieval with RRF Fusion** — Search now runs three retrieval paths in parallel: vector (semantic similarity), keyword (BM25 full-text via Postgres tsvector or SQLite FTS5), and graph (BFS spreading activation through entity relationships). Results are merged using Reciprocal Rank Fusion (RRF). Exact names and technical terms now surface reliably even when embeddings miss them. Entity relationships that were previously stored but unused are now a first-class retrieval signal. Feature-flagged via `MULTI_PATH_SEARCH=true` (default on). Use `format=full` in `brain_search` to see which paths contributed to each result. Includes a backfill script (`scripts/backfill-keyword-index.js`) for existing memories.
+
+### What Was New in v2.2
 
 - **Noise-Free Entity Extraction** — v2.2 filters out CSS properties, code identifiers, shell commands, sentence fragments, French prose, and generic phrases. Pattern-based filtering with 50+ generic noun/adjective blocklists. Includes a retroactive cleanup script (`scripts/cleanup-garbage-entities.js`) to purge existing noise.
 - **Per-Client Knowledge Base** — Fingerprint-based client identification with accent normalization. One tool call (`brain_client`) returns everything known about a client: brand, strategy, meetings, content, technical details, relationships. Fuzzy name resolution ("JL" resolves to "jetloans").

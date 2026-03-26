@@ -103,7 +103,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_search',
-      description: 'Semantic search across all shared memories from all agents. Results are ranked by similarity * confidence. Returns compact format (truncated content) by default to save tokens.',
+      description: 'Multi-path search across all shared memories. Uses vector (semantic), keyword (BM25 exact match), and graph (entity relationship BFS) retrieval in parallel, merged with Reciprocal Rank Fusion. Returns compact format by default to save tokens. Use format="full" to see which retrieval paths contributed to each result.',
       inputSchema: {
         type: 'object',
         properties: {

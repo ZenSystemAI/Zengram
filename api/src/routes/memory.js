@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { embed } from '../services/embedders/interface.js';
 import {
   upsertPoint, searchPoints, updatePointPayload,
-  findByPayload, computeEffectiveConfidence, getPoint,
+  findByPayload, computeEffectiveConfidence, getPoint, getPoints,
 } from '../services/qdrant.js';
 import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
@@ -13,6 +13,11 @@ import { scrubCredentials, scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateMemoryInput, MAX_OBSERVED_BY } from '../middleware/validate.js';
 import { dispatchNotification } from '../services/notifications.js';
+import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
+import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js';
+import { reciprocalRankFusion } from '../services/rrf.js';
+
+const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 import { getClientResolver } from '../services/client-resolver.js';
 
 export const memoryRouter = Router();
@@ -127,6 +132,7 @@ memoryRouter.post('/', async (req, res) => {
           superseded_by: pointId,
           superseded_at: now,
         });
+        deactivateMemory(matches[0].id).catch(() => {});
         dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
       }
     } else if (type === 'status' && req.body.subject) {
@@ -139,6 +145,7 @@ memoryRouter.post('/', async (req, res) => {
           superseded_by: pointId,
           superseded_at: now,
         });
+        deactivateMemory(matches[0].id).catch(() => {});
         dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
       }
     }
@@ -182,6 +189,15 @@ memoryRouter.post('/', async (req, res) => {
     // Embed and store in Qdrant
     const vector = await embed(cleanContent, 'store');
     await upsertPoint(pointId, vector, payload);
+
+    // Index in keyword search (fire-and-forget)
+    if (isKeywordSearchAvailable()) {
+      indexMemory(pointId, cleanContent, {
+        client_id: client_id || 'global',
+        source_agent,
+        type,
+      }).catch(e => console.error('[memory:keyword-index]', e.message));
+    }
 
     // Dispatch webhook notification for new memory
     dispatchNotification('memory_stored', { id: pointId, ...payload });
@@ -248,24 +264,24 @@ memoryRouter.post('/', async (req, res) => {
   }
 });
 
-// GET /memory/search — Semantic search via Qdrant
+// GET /memory/search — Multi-path retrieval with RRF fusion
+// Paths: vector (semantic), keyword (BM25), graph (entity BFS)
 memoryRouter.get('/search', async (req, res) => {
   try {
     const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format } = req.query;
     const isCompact = format === 'compact';
+    const isFull = format === 'full';
+    const maxResults = Math.min(parseInt(limit) || 10, 100);
 
     if (!q) {
       return res.status(400).json({ error: 'Missing required query parameter: q' });
     }
-
-    const vector = await embed(q, 'search');
 
     const filter = {};
     if (type) filter.type = type;
     if (source_agent) filter.source_agent = source_agent;
     if (client_id) filter.client_id = client_id;
     if (category) filter.category = category;
-    // By default, only return active memories (not superseded)
     if (include_superseded !== 'true') filter.active = true;
 
     // Entity filter — resolve alias to canonical name, then filter via Qdrant payload
@@ -281,25 +297,99 @@ memoryRouter.get('/search', async (req, res) => {
       nestedFilters.push({ arrayField: 'entities', key: 'name', value: entityName });
     }
 
-    const rawResults = await searchPoints(vector, filter, Math.min(parseInt(limit) || 10, 100), nestedFilters);
+    // --- Multi-path retrieval ---
+    const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is Qdrant-only
+    const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
+
+    // Always run vector search
+    const vectorPromise = embed(q, 'search').then(vector =>
+      searchPoints(vector, filter, fetchLimit, nestedFilters)
+    );
+
+    // Run keyword + graph in parallel (only if multi-path enabled)
+    const keywordPromise = (useMultiPath && isKeywordSearchAvailable())
+      ? keywordSearch(q, filter, fetchLimit).catch(e => {
+          console.error('[memory:keyword-search]', e.message);
+          return [];
+        })
+      : Promise.resolve([]);
+
+    const graphPromise = (useMultiPath && isGraphSearchAvailable())
+      ? graphSearch(q, filter, Math.min(maxResults, 20)).catch(e => {
+          console.error('[memory:graph-search]', e.message);
+          return [];
+        })
+      : Promise.resolve([]);
+
+    const [vectorResults, keywordResults, graphResults] = await Promise.all([
+      vectorPromise, keywordPromise, graphPromise,
+    ]);
+
+    // --- Build result set ---
+    let finalResults;
+    const retrievalSources = {};
+
+    if (useMultiPath && (keywordResults.length > 0 || graphResults.length > 0)) {
+      // Build ranked lists for RRF
+      const rankedLists = [
+        vectorResults.map(r => ({ id: r.id, source: 'vector' })),
+      ];
+      if (keywordResults.length > 0) {
+        rankedLists.push(keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })));
+      }
+      if (graphResults.length > 0) {
+        rankedLists.push(graphResults.map(r => ({ id: r.memory_id, source: 'graph' })));
+      }
+
+      const fused = reciprocalRankFusion(rankedLists);
+      const topFused = fused.slice(0, maxResults);
+
+      // Track which sources contributed to each result
+      for (const f of topFused) {
+        retrievalSources[f.id] = f.sources;
+      }
+
+      // Build payload map from vector results (already have full payloads)
+      const payloadMap = new Map();
+      for (const r of vectorResults) {
+        payloadMap.set(r.id, { id: r.id, score: r.score, payload: r.payload });
+      }
+
+      // Fetch payloads for keyword/graph hits not in vector results
+      const missingIds = topFused.map(f => f.id).filter(id => !payloadMap.has(id));
+      if (missingIds.length > 0) {
+        try {
+          const fetched = await getPoints(missingIds);
+          for (const pt of fetched) {
+            payloadMap.set(pt.id, { id: pt.id, score: 0, payload: pt.payload });
+          }
+        } catch (e) {
+          console.error('[memory:search] Batch fetch failed:', e.message);
+        }
+      }
+
+      // Assemble results in RRF order
+      finalResults = topFused
+        .map(f => payloadMap.get(f.id))
+        .filter(Boolean);
+    } else {
+      // Single-path: vector only
+      finalResults = vectorResults.slice(0, maxResults);
+    }
 
     // Apply confidence decay + access-weighted ranking
-    // Memories that get used more are more valuable — self-curating brain
     const COMPACT_MAX = 200;
-    const results = rawResults.map(r => {
+    const results = finalResults.map(r => {
       const effectiveConfidence = computeEffectiveConfidence(r.payload);
       const p = r.payload;
-
-      // Access boost: log(access_count + 1) gives diminishing returns
-      // 0 accesses = 1.0x, 1 = 1.3x, 5 = 1.8x, 20 = 2.3x, 100 = 2.7x
       const accessBoost = 1 + (0.3 * Math.log2((p.access_count || 0) + 1));
-      const effectiveScore = +(r.score * effectiveConfidence * accessBoost).toFixed(4);
+      const effectiveScore = +(((r.score || 0.5) * effectiveConfidence * accessBoost)).toFixed(4);
 
       if (isCompact) {
         const text = p.text || '';
         return {
           id: r.id,
-          score: +r.score.toFixed(4),
+          score: +(r.score || 0).toFixed(4),
           effective_score: effectiveScore,
           type: p.type,
           content: text.length > COMPACT_MAX ? text.slice(0, COMPACT_MAX) + '...' : text,
@@ -310,22 +400,28 @@ memoryRouter.get('/search', async (req, res) => {
         };
       }
 
-      return {
+      const base = {
         id: r.id,
-        score: r.score,
+        score: r.score || 0,
         confidence: effectiveConfidence,
         effective_score: effectiveScore,
         ...p,
       };
+
+      // In full format, show which retrieval paths contributed
+      if (isFull && retrievalSources[r.id]) {
+        base.retrieval_sources = retrievalSources[r.id];
+      }
+
+      return base;
     });
 
-    // Re-sort by effective_score (now includes access weight)
+    // Re-sort by effective_score
     results.sort((a, b) => b.effective_score - a.effective_score);
 
     // Async: increment access_count and update last_accessed_at for returned results
     const pointIds = results.map(r => r.id);
     if (pointIds.length > 0) {
-      // Fire and forget — don't slow down the response
       Promise.resolve().then(async () => {
         try {
           const now = new Date().toISOString();
@@ -341,11 +437,25 @@ memoryRouter.get('/search', async (req, res) => {
       });
     }
 
-    res.json({
+    const response = {
       query: q,
       count: results.length,
       results,
-    });
+    };
+
+    // In full format, add retrieval metadata
+    if (isFull && useMultiPath) {
+      response.retrieval = {
+        multi_path: true,
+        paths: {
+          vector: vectorResults.length,
+          keyword: keywordResults.length,
+          graph: graphResults.length,
+        },
+      };
+    }
+
+    res.json(response);
   } catch (err) {
     console.error('[memory:search] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -426,6 +536,7 @@ memoryRouter.delete('/:id', async (req, res) => {
       deletion_reason: reason || null,
     });
 
+    deactivateMemory(id).catch(() => {});
     dispatchNotification('memory_deleted', { id, ...point.payload });
 
     console.log(`[memory:delete] Memory ${id} soft-deleted by ${req.authenticatedAgent || 'admin'}${reason ? ': ' + reason : ''}`);

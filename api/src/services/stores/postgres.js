@@ -115,6 +115,47 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
     `);
 
+    // Keyword search table (BM25 via tsvector)
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS memory_search (
+        memory_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        content_tsv TSVECTOR,
+        client_id TEXT DEFAULT 'global',
+        source_agent TEXT,
+        type TEXT,
+        active BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ms_tsv ON memory_search USING GIN(content_tsv);
+      CREATE INDEX IF NOT EXISTS idx_ms_client ON memory_search(client_id);
+      CREATE INDEX IF NOT EXISTS idx_ms_active ON memory_search(active) WHERE active = true;
+    `);
+
+    // tsvector auto-compute trigger
+    await this.pool.query(`
+      CREATE OR REPLACE FUNCTION memory_search_tsv_trigger() RETURNS trigger AS $$
+      BEGIN
+        NEW.content_tsv := to_tsvector('english', COALESCE(NEW.content, ''));
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_ms_tsv ON memory_search;
+      CREATE TRIGGER trg_ms_tsv BEFORE INSERT OR UPDATE OF content
+        ON memory_search FOR EACH ROW EXECUTE FUNCTION memory_search_tsv_trigger();
+    `);
+
+    // Co-occurrence partial indexes for graph search performance
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_er_cooccurrence_src
+        ON entity_relationships(source_entity_id, strength DESC)
+        WHERE relationship_type = 'co_occurrence';
+      CREATE INDEX IF NOT EXISTS idx_er_cooccurrence_tgt
+        ON entity_relationships(target_entity_id, strength DESC)
+        WHERE relationship_type = 'co_occurrence';
+    `);
+
     console.log(`[postgres] Database ready`);
   }
 

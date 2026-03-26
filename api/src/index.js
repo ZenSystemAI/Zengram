@@ -13,7 +13,8 @@ import { exportRouter } from './routes/export.js';
 import { graphRouter } from './routes/graph.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
-import { initStore, isEntityStoreAvailable, loadAllAliases } from './services/stores/interface.js';
+import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance, getBackendType } from './services/stores/interface.js';
+import { initKeywordSearch } from './services/keyword-search.js';
 import { initClientResolver } from './services/client-resolver.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
@@ -68,6 +69,9 @@ async function start() {
 
     // Initialize structured storage backend
     await initStore();
+
+    // Initialize keyword search (BM25 via Postgres tsvector or SQLite FTS5)
+    initKeywordSearch(_getStoreInstance(), getBackendType());
 
     // Initialize client fingerprint resolver (Baserow → fuzzy matcher)
     await initClientResolver();

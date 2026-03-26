@@ -143,6 +143,17 @@ export class SQLiteStore {
       CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
     `);
 
+    // FTS5 virtual table for keyword search (BM25)
+    try {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_search_fts USING fts5(
+          memory_id UNINDEXED, content, client_id UNINDEXED, type UNINDEXED
+        );
+      `);
+    } catch (e) {
+      console.warn('[sqlite] FTS5 not available (keyword search disabled):', e.message);
+    }
+
     console.log(`[sqlite] Database ready at ${this.dbPath}`);
   }
 

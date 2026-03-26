@@ -205,6 +205,16 @@ export async function getPoint(pointId) {
   return result.result || null;
 }
 
+// Batch retrieve points by IDs (for RRF fusion — fetch payloads for keyword/graph hits)
+export async function getPoints(pointIds) {
+  if (!pointIds || pointIds.length === 0) return [];
+  const result = await qdrantRequest(`/collections/${COLLECTION}/points`, {
+    method: 'POST',
+    body: JSON.stringify({ ids: pointIds, with_payload: true, with_vector: false }),
+  });
+  return result.result || [];
+}
+
 // Update payload fields on existing points (partial update)
 export async function updatePointPayload(pointIds, payload) {
   const ids = Array.isArray(pointIds) ? pointIds : [pointIds];
