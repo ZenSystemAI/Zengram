@@ -286,7 +286,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_client',
-      description: 'Get everything known about a client — brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "JL" resolves to "jetloans").',
+      description: 'Get everything known about a client — brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "AL" resolves to "acme-loans").',
       inputSchema: {
         type: 'object',
         properties: {

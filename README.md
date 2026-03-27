@@ -37,7 +37,7 @@ Born from a production setup where [OpenClaw](https://github.com/openclaw/opencl
 ### What Was New in v2.2
 
 - **Noise-Free Entity Extraction** — v2.2 filters out CSS properties, code identifiers, shell commands, sentence fragments, French prose, and generic phrases. Pattern-based filtering with 50+ generic noun/adjective blocklists. Includes a retroactive cleanup script (`scripts/cleanup-garbage-entities.js`) to purge existing noise.
-- **Per-Client Knowledge Base** — Fingerprint-based client identification with accent normalization. One tool call (`brain_client`) returns everything known about a client: brand, strategy, meetings, content, technical details, relationships. Fuzzy name resolution ("JL" resolves to "jetloans").
+- **Per-Client Knowledge Base** — Fingerprint-based client identification with accent normalization. One tool call (`brain_client`) returns everything known about a client: brand, strategy, meetings, content, technical details, relationships. Fuzzy name resolution ("AL" resolves to "acme-loans").
 - **Gemini Embedding 2** — Task-type-aware embeddings at 3072 dimensions. Uses `RETRIEVAL_DOCUMENT` for storage, `RETRIEVAL_QUERY` for search. Matryoshka support for flexible dimensionality (3072/1536/768).
 - **Import/Export** — Full backup and migration support. Export all memories as JSON, import with automatic deduplication. Never lose data when switching embedding providers again.
 - **Webhook Notifications** — Real-time dispatch when memories are stored, superseded, or deleted. Fire-and-forget to any HTTP endpoint.

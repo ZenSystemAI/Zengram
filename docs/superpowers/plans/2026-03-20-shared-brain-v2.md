@@ -86,23 +86,23 @@ describe('ClientResolver', () => {
   before(() => {
     resolver = new ClientResolver();
     resolver.loadFingerprints([
-      { client_id: 'jetloans', fingerprints: { aliases: ['JL', 'Jet Loans'], people: ['Brandon'], domains: ['jetloans.ca'], keywords: ['Granby'] } },
-      { client_id: 'credit-instant', fingerprints: { aliases: ['Credit Instant', 'CI'], people: ['Brandon'], domains: ['creditinstant.com'], keywords: ['Quebec City'] } },
-      { client_id: 'biolistix', fingerprints: { aliases: ['Bio'], people: ['Dominique'], domains: ['biolistix.ca'], keywords: [] } },
+      { client_id: 'acme-loans', fingerprints: { aliases: ['AL', 'Acme Loans'], people: ['Alex'], domains: ['acme-loans.ca'], keywords: ['Springfield'] } },
+      { client_id: 'quickcredit', fingerprints: { aliases: ['QuickCredit', 'QC'], people: ['Alex'], domains: ['quickcredit.com'], keywords: ['Riverside'] } },
+      { client_id: 'greenlife', fingerprints: { aliases: ['GL'], people: ['Jordan'], domains: ['greenlife.ca'], keywords: [] } },
     ]);
   });
 
   it('should resolve by alias', () => {
-    assert.strictEqual(resolver.resolve('Talked to JL about their SEO strategy'), 'jetloans');
+    assert.strictEqual(resolver.resolve('Talked to AL about their SEO strategy'), 'acme-loans');
   });
 
   it('should resolve by domain', () => {
-    assert.strictEqual(resolver.resolve('Updated jetloans.ca homepage'), 'jetloans');
+    assert.strictEqual(resolver.resolve('Updated acme-loans.ca homepage'), 'acme-loans');
   });
 
   it('should resolve by person + context', () => {
-    // Brandon alone is ambiguous (both jetloans + credit-instant), needs 2nd signal
-    assert.strictEqual(resolver.resolve('Brandon called about Granby store'), 'jetloans');
+    // Alex alone is ambiguous (both acme-loans + quickcredit), needs 2nd signal
+    assert.strictEqual(resolver.resolve('Alex called about Springfield store'), 'acme-loans');
   });
 
   it('should return null when below threshold', () => {
@@ -110,18 +110,18 @@ describe('ClientResolver', () => {
   });
 
   it('should return array for multi-client content', () => {
-    const result = resolver.resolve('Discussed jetloans.ca redesign and Biolistix supplement strategy');
+    const result = resolver.resolve('Discussed acme-loans.ca redesign and GreenLife supplement strategy');
     assert.ok(Array.isArray(result));
-    assert.ok(result.includes('jetloans'));
-    assert.ok(result.includes('biolistix'));
+    assert.ok(result.includes('acme-loans'));
+    assert.ok(result.includes('greenlife'));
   });
 
   it('should be case-insensitive', () => {
-    assert.strictEqual(resolver.resolve('JETLOANS website is down'), 'jetloans');
+    assert.strictEqual(resolver.resolve('ACME-LOANS website is down'), 'acme-loans');
   });
 
   it('should handle accented characters', () => {
-    assert.strictEqual(resolver.resolve('Crédit Instant needs new landing page for Québec City'), 'credit-instant');
+    assert.strictEqual(resolver.resolve('QuickCrédit needs new landing page for Riverside'), 'quickcredit');
   });
 });
 ```
@@ -320,8 +320,8 @@ import assert from 'node:assert';
 describe('client route response format', () => {
   it('should structure briefing with profile and knowledge sections', () => {
     const response = {
-      client_id: 'jetloans',
-      profile: { name: 'Jetloans', industry: 'loans' },
+      client_id: 'acme-loans',
+      profile: { name: 'Acme Loans', industry: 'loans' },
       knowledge: {
         brand: [], strategy: [], meeting: [],
         content: [], technical: [], relationship: [],
@@ -472,7 +472,7 @@ In `mcp-server/src/index.js`, add to the tools array:
 ```javascript
 {
   name: 'brain_client',
-  description: 'Get everything known about a client — profile, brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "JL" resolves to "jetloans").',
+  description: 'Get everything known about a client — profile, brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "AL" resolves to "acme-loans").',
   inputSchema: {
     type: 'object',
     properties: {
@@ -668,7 +668,7 @@ import { buildNotificationPayload } from '../src/services/notifications.js';
 describe('notifications', () => {
   it('should build memory_stored payload', () => {
     const payload = buildNotificationPayload('memory_stored', {
-      id: 'test-id', type: 'fact', client_id: 'jetloans',
+      id: 'test-id', type: 'fact', client_id: 'acme-loans',
       knowledge_category: 'strategy', content: 'Long content here that should be truncated...',
       source_agent: 'claude-code', importance: 'high', created_at: '2026-03-20T00:00:00Z',
     });
@@ -769,8 +769,8 @@ import assert from 'node:assert';
 describe('entity relationships', () => {
   it('should detect co-occurring entities', () => {
     const entities = [
-      { name: 'Jetloans', type: 'client' },
-      { name: 'Brandon', type: 'person' },
+      { name: 'Acme Loans', type: 'client' },
+      { name: 'Alex', type: 'person' },
       { name: 'SEMrush', type: 'technology' },
     ];
     // Each pair should create a relationship
@@ -902,7 +902,7 @@ graphRouter.get('/:entity/html', async (req, res) => {
 
 - [ ] **Step 3: Test manually**
 
-Open `http://192.168.18.40:8084/graph/Jetloans/html` in browser and verify the visualization renders.
+Open `http://localhost:8084/graph/Acme Loans/html` in browser and verify the visualization renders.
 
 - [ ] **Step 4: Commit**
 
@@ -936,7 +936,7 @@ Import `getClientResolver` from `'../services/client-resolver.js'`.
 
 - [ ] **Step 2: Test by storing a memory without client_id that mentions a client**
 
-Use curl or MCP to store a fact with content "Updated Jetloans homepage meta tags for Granby SEO" without providing client_id. Verify it auto-resolves to `jetloans`.
+Use curl or MCP to store a fact with content "Updated Acme Loans homepage meta tags for Springfield SEO" without providing client_id. Verify it auto-resolves to `acme-loans`.
 
 - [ ] **Step 3: Commit**
 
@@ -1045,13 +1045,13 @@ BASEROW_CLIENTS_TABLE_ID=734
 - [ ] **Step 3: Rebuild and restart container**
 
 ```bash
-ssh beelink "cd ~/shared-brain && docker compose build memory-api && docker compose up -d memory-api"
+ssh server "cd ~/shared-brain && docker compose build memory-api && docker compose up -d memory-api"
 ```
 
 - [ ] **Step 4: Verify startup logs**
 
 ```bash
-ssh beelink "docker logs shared-brain-api --tail 20"
+ssh server "docker logs shared-brain-api --tail 20"
 ```
 Expected: client resolver loaded, all routes registered, no errors.
 
@@ -1061,9 +1061,9 @@ Add `client_fingerprints` field (long text) to table 734 via Baserow UI. Populat
 
 - [ ] **Step 6: Test brain_client via MCP**
 
-Call `brain_client("jetloans")` — should return a briefing (initially empty knowledge sections until memories are stored with knowledge_category).
+Call `brain_client("acme-loans")` — should return a briefing (initially empty knowledge sections until memories are stored with knowledge_category).
 
-Call `brain_client("JL")` — should resolve to jetloans via fingerprints.
+Call `brain_client("AL")` — should resolve to acme-loans via fingerprints.
 
 - [ ] **Step 7: Test export/import round-trip**
 
@@ -1072,7 +1072,7 @@ Save output, then call `brain_import(data)` — should report all skipped (dupli
 
 - [ ] **Step 8: Test graph visualization**
 
-Open `http://192.168.18.40:8084/graph/claude-code/html` in browser — should render interactive graph.
+Open `http://localhost:8084/graph/claude-code/html` in browser — should render interactive graph.
 
 - [ ] **Step 9: Update local MCP server**
 

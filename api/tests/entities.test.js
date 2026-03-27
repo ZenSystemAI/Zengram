@@ -80,11 +80,11 @@ describe('extractEntities — domains', () => {
   });
 
   it('extracts domain names', () => {
-    const text = 'Deployed to expertlocal.ca and checked acme-corp.com';
+    const text = 'Deployed to localagency.ca and checked acme-corp.com';
     const entities = extractEntities(text, 'global', 'test');
     const domains = entities.filter(e => e.type === 'domain');
     const names = domains.map(e => e.name);
-    assert.ok(names.includes('expertlocal.ca'));
+    assert.ok(names.includes('localagency.ca'));
     assert.ok(names.includes('acme-corp.com'));
   });
 
@@ -169,8 +169,8 @@ describe('extractEntities — alias cache', () => {
   });
 
   it('addToAliasCache makes new aliases resolvable', () => {
-    addToAliasCache('morpheus', 99, 'Morpheus Server', 'system');
-    const text = 'Deployed update to Morpheus overnight';
+    addToAliasCache('test-server', 99, 'Test Server', 'system');
+    const text = 'Deployed update to Test Server overnight';
     const entities = extractEntities(text, 'global', 'test');
     // Morpheus should resolve — check alias cache was used
     // (It'll match as technology "Morpheus" since it's not in KNOWN_TECH,

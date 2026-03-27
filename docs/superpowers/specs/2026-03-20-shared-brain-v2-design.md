@@ -22,20 +22,20 @@ Each client gets a fingerprint dictionary stored in Baserow table 734 (clients) 
 **Fingerprint format**:
 ```json
 {
-  "aliases": ["jetloans", "jet loans", "JL"],
-  "people": ["Brandon"],
-  "domains": ["jetloans.ca"],
-  "keywords": ["Granby", "micro-prets"],
-  "related_clients": ["credit-instant"]
+  "aliases": ["acme-loans", "acme loans", "AL"],
+  "people": ["Alex"],
+  "domains": ["acme-loans.ca"],
+  "keywords": ["Springfield", "small-loans"],
+  "related_clients": ["quickcredit"]
 }
 ```
 
 **Known fingerprints at launch**:
-- `jetloans`: aliases [JL, Jet Loans], people [Brandon], domains [jetloans.ca], keywords [Granby]
-- `credit-instant`: aliases [Credit Instant, CI], people [Brandon], domains [creditinstant.com], keywords [Quebec City]
-- `biolistix`: aliases [Bio], people [Dominique], domains [biolistix.ca]
-- `la-canardiere`: aliases [La Canardiere, Canardiere], domains [lacanardiere.com]
-- `expert-local`: aliases [EL, Expert Local], people [Steven], domains [expertlocal.ca]
+- `acme-loans`: aliases [AL, Acme Loans], people [Alex], domains [acme-loans.ca], keywords [Springfield]
+- `quickcredit`: aliases [QuickCredit, QC], people [Alex], domains [quickcredit.com], keywords [Riverside]
+- `greenlife`: aliases [GL], people [Jordan], domains [greenlife.ca]
+- `riverside-inn`: aliases [Riverside Inn, Riverside], domains [riverside-inn.com]
+- `localagency`: aliases [LA, Local Agency], people [Sam], domains [localagency.ca]
 
 **API-side resolver** — `resolveClientId(text)`:
 1. On startup, fetches all fingerprints from Baserow 734 and caches them
@@ -92,8 +92,8 @@ One-call access to everything known about a client.
 4. Return structured response:
 ```json
 {
-  "client_id": "jetloans",
-  "profile": { "name": "Jetloans", "industry": "loans", "brand_voice_tone": "helpful", ... },
+  "client_id": "acme-loans",
+  "profile": { "name": "Acme Loans", "industry": "loans", "brand_voice_tone": "helpful", ... },
   "knowledge": {
     "brand": [...],
     "strategy": [...],
@@ -119,9 +119,9 @@ The existing Fireflies daily processor workflow (`E:\dev\n8n\fireflies-daily-pro
 **A. Fingerprint injection**: Before the LLM extraction node, add a step that fetches fingerprints from the Shared Brain API (new endpoint: `GET /clients/fingerprints`) and formats them into the extraction prompt:
 ```
 Active clients and identifiers:
-- jetloans (aliases: JL, Jet Loans | people: Brandon | domains: jetloans.ca)
-- credit-instant (aliases: Credit Instant | people: Brandon | domains: creditinstant.com)
-- biolistix (aliases: Bio | people: Dominique | domains: biolistix.ca)
+- acme-loans (aliases: AL, Acme Loans | people: Alex | domains: acme-loans.ca)
+- quickcredit (aliases: QuickCredit | people: Alex | domains: quickcredit.com)
+- greenlife (aliases: GL | people: Jordan | domains: greenlife.ca)
 ...
 
 For each topic/action item, identify which client_id it belongs to.
@@ -148,9 +148,9 @@ If a segment doesn't match any client, use "internal".
     "id": "uuid",
     "content": "...",
     "type": "fact",
-    "key": "seo-strategy-jetloans",
+    "key": "seo-strategy-acme-loans",
     "subject": null,
-    "client_id": "jetloans",
+    "client_id": "acme-loans",
     "knowledge_category": "strategy",
     "category": "semantic",
     "source_agent": "claude-code",
@@ -159,7 +159,7 @@ If a segment doesn't match any client, use "internal".
     "access_count": 3,
     "active": true,
     "superseded_by": null,
-    "entities": [{"name": "Jetloans", "type": "client"}],
+    "entities": [{"name": "Acme Loans", "type": "client"}],
     "created_at": "2026-03-20T...",
     "last_accessed_at": "2026-03-20T..."
   }
@@ -213,7 +213,7 @@ WEBHOOK_NOTIFY_URLS=http://n8n.local:5678/webhook/brain-event
   "memory": {
     "id": "uuid",
     "type": "fact",
-    "client_id": "jetloans",
+    "client_id": "acme-loans",
     "knowledge_category": "strategy",
     "content_preview": "First 200 chars...",
     "source_agent": "claude-code",
