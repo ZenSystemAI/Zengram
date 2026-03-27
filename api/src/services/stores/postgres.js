@@ -241,6 +241,7 @@ export class PostgresStore {
 
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
+    if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.subject) { sql += ` AND subject ILIKE $${i++}`; params.push(`%${filters.subject}%`); }
 
     sql += ' ORDER BY updated_at DESC LIMIT 50';

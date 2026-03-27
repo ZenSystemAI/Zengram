@@ -38,7 +38,7 @@ function classifyRequest(method, path) {
 }
 
 export function rateLimitMiddleware(req, res, next) {
-  const apiKey = req.headers['x-api-key'] || 'unknown';
+  const apiKey = req.rateLimitKey || req.headers['x-api-key'] || req.headers.authorization || req.query?.key || 'unknown';
   const type = classifyRequest(req.method, req.path);
   const { limited, retryAfter } = checkLimit(apiKey, type);
 

@@ -9,16 +9,17 @@ import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
-import { scrubCredentials, scrubObject } from '../services/scrub.js';
+import { scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
-import { validateMemoryInput, MAX_OBSERVED_BY } from '../middleware/validate.js';
+import { MAX_OBSERVED_BY } from '../middleware/validate.js';
 import { dispatchNotification } from '../services/notifications.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
 import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
+import { buildDedupExtraFilter, normalizeMemoryRecord } from '../services/memory-write-utils.js';
+import { getClientResolver } from '../services/client-resolver.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
-import { getClientResolver } from '../services/client-resolver.js';
 
 export const memoryRouter = Router();
 
@@ -26,12 +27,6 @@ export const memoryRouter = Router();
 memoryRouter.post('/', async (req, res) => {
   try {
     let { type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = req.body;
-
-    // Validate all input fields
-    const validationError = validateMemoryInput(req.body);
-    if (validationError) {
-      return res.status(400).json({ error: validationError });
-    }
 
     // Enforce agent identity: if authenticated with an agent key, source_agent must match
     if (req.authenticatedAgent && source_agent !== req.authenticatedAgent) {
@@ -49,14 +44,27 @@ memoryRouter.post('/', async (req, res) => {
       }
     }
 
-    // Scrub credentials
-    const cleanContent = scrubCredentials(content);
+    const { normalized, contentHash, error: normalizationError } = normalizeMemoryRecord({
+      ...req.body,
+      type,
+      content,
+      source_agent,
+      client_id,
+      category,
+      importance,
+      knowledge_category,
+      metadata,
+    });
 
-    // Generate content hash for dedup
-    const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
+    if (normalizationError) {
+      return res.status(400).json({ error: normalizationError });
+    }
+
+    ({ type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = normalized);
+    const cleanContent = normalized.content;
 
     // --- Deduplication check ---
-    const duplicates = await findByPayload('content_hash', contentHash, { active: true });
+    const duplicates = await findByPayload('content_hash', contentHash, buildDedupExtraFilter(client_id, type));
     if (duplicates.length > 0) {
       const existing = duplicates[0];
       const existingObservedBy = existing.payload.observed_by || [existing.payload.source_agent];

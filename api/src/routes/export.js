@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { scrollPoints, upsertPoint, findByPayload } from '../services/qdrant.js';
 import { embed } from '../services/embedders/interface.js';
 import { isStoreAvailable, createEvent, upsertFact, upsertStatus } from '../services/stores/interface.js';
+import { buildDedupExtraFilter, normalizeImportRecord } from '../services/memory-write-utils.js';
 
 export const exportRouter = Router();
 
@@ -96,49 +97,46 @@ exportRouter.post('/import', async (req, res) => {
       // Process each record in the batch sequentially
       for (const record of batch) {
         try {
-          const content = record.content || record.text || '';
-          if (!content) {
+          const { normalized, contentHash, error } = normalizeImportRecord(record);
+          if (error) {
             errors++;
             continue;
           }
 
-          // Compute content hash (SHA-256, first 16 hex chars — matches memory.js pattern)
-          const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
-
-          // Check for existing memory with same content hash
-          const existing = await findByPayload('content_hash', contentHash);
+          // Check for existing memory with same hash in the same tenant/type scope
+          const existing = await findByPayload('content_hash', contentHash, buildDedupExtraFilter(normalized.client_id, normalized.type));
           if (existing.length > 0) {
             skipped++;
             continue;
           }
 
           // Embed and generate ID
-          const vector = await embed(content);
-          const pointId = record.id || crypto.randomUUID();
+          const vector = await embed(normalized.content, 'store');
+          const pointId = normalized.id || crypto.randomUUID();
           const now = new Date().toISOString();
 
           // Build full payload
           const payload = {
-            text: content,
-            type: record.type || 'event',
-            key: record.key || null,
-            subject: record.subject || null,
-            client_id: record.client_id || 'global',
-            knowledge_category: record.knowledge_category || null,
-            category: record.category || 'episodic',
-            source_agent: record.source_agent || 'import',
-            importance: record.importance || 'medium',
-            confidence: record.confidence !== undefined ? record.confidence : 1.0,
-            access_count: record.access_count || 0,
-            active: record.active !== undefined ? record.active : true,
-            superseded_by: record.superseded_by || null,
-            entities: record.entities || [],
+            text: normalized.content,
+            type: normalized.type,
+            key: normalized.key || null,
+            subject: normalized.subject || null,
+            client_id: normalized.client_id,
+            knowledge_category: normalized.knowledge_category,
+            category: normalized.category,
+            source_agent: normalized.source_agent,
+            importance: normalized.importance,
+            confidence: normalized.confidence !== undefined ? normalized.confidence : 1.0,
+            access_count: normalized.access_count || 0,
+            active: normalized.active !== undefined ? normalized.active : true,
+            superseded_by: normalized.superseded_by || null,
+            entities: normalized.entities || [],
             content_hash: contentHash,
-            created_at: record.created_at || now,
-            last_accessed_at: record.last_accessed_at || now,
-            observed_by: record.observed_by || [record.source_agent || 'import'],
-            observation_count: record.observation_count || 1,
-            consolidated: record.consolidated || false,
+            created_at: normalized.created_at || now,
+            last_accessed_at: normalized.last_accessed_at || now,
+            observed_by: normalized.observed_by || [normalized.source_agent],
+            observation_count: normalized.observation_count || 1,
+            consolidated: normalized.consolidated || false,
           };
 
           // Upsert to Qdrant
@@ -148,7 +146,7 @@ exportRouter.post('/import', async (req, res) => {
           if (isStoreAvailable()) {
             try {
               const storeData = {
-                content,
+                content: normalized.content,
                 source_agent: payload.source_agent,
                 client_id: payload.client_id,
                 category: payload.category,
@@ -162,12 +160,12 @@ exportRouter.post('/import', async (req, res) => {
                 storeData.type = type;
                 await createEvent(storeData);
               } else if (type === 'fact') {
-                storeData.key = record.key || contentHash;
-                storeData.value = content;
+                storeData.key = normalized.key || contentHash;
+                storeData.value = normalized.content;
                 await upsertFact(storeData);
               } else if (type === 'status') {
-                storeData.subject = record.subject || 'unknown';
-                storeData.status = record.status_value || content;
+                storeData.subject = normalized.subject || 'unknown';
+                storeData.status = normalized.status_value || normalized.content;
                 await upsertStatus(storeData);
               }
             } catch (storeErr) {
