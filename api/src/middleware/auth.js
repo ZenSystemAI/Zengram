@@ -59,7 +59,7 @@ export function authMiddleware(req, res, next) {
     return res.status(429).json({ error: 'Too many failed attempts. Try again later.' });
   }
 
-  const key = req.headers['x-api-key'] || req.query.key;
+  const key = req.headers['x-api-key'];
   if (!key) {
     recordFailure(ip);
     return res.status(401).json({ error: 'Missing API key' });

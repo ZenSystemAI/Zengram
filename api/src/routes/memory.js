@@ -56,7 +56,7 @@ memoryRouter.post('/', async (req, res) => {
     const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
 
     // --- Deduplication check ---
-    const duplicates = await findByPayload('content_hash', contentHash, { active: true });
+    const duplicates = await findByPayload('content_hash', contentHash, { active: true, client_id: client_id || 'global', type });
     if (duplicates.length > 0) {
       const existing = duplicates[0];
       const existingObservedBy = existing.payload.observed_by || [existing.payload.source_agent];

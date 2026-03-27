@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { scrollPoints, upsertPoint, findByPayload } from '../services/qdrant.js';
 import { embed } from '../services/embedders/interface.js';
 import { isStoreAvailable, createEvent, upsertFact, upsertStatus } from '../services/stores/interface.js';
+import { scrubCredentials } from '../services/scrub.js';
+import { validateMemoryInput } from '../middleware/validate.js';
 
 export const exportRouter = Router();
 
@@ -96,24 +98,44 @@ exportRouter.post('/import', async (req, res) => {
       // Process each record in the batch sequentially
       for (const record of batch) {
         try {
-          const content = record.content || record.text || '';
-          if (!content) {
+          const rawContent = record.content || record.text || '';
+          if (!rawContent) {
             errors++;
             continue;
           }
 
-          // Compute content hash (SHA-256, first 16 hex chars — matches memory.js pattern)
+          // Validate input (same rules as POST /memory)
+          const validationError = validateMemoryInput({
+            type: record.type || 'event',
+            content: rawContent,
+            source_agent: record.source_agent || 'import',
+            importance: record.importance,
+            client_id: record.client_id,
+          });
+          if (validationError) {
+            errors++;
+            continue;
+          }
+
+          // Scrub credentials (same as POST /memory)
+          const content = scrubCredentials(rawContent);
+
+          // Compute content hash from scrubbed content
           const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 
-          // Check for existing memory with same content hash
-          const existing = await findByPayload('content_hash', contentHash);
+          // Check for existing memory with same content hash, scoped by tenant + type
+          const existing = await findByPayload('content_hash', contentHash, {
+            active: true,
+            client_id: record.client_id || 'global',
+            type: record.type || 'event',
+          });
           if (existing.length > 0) {
             skipped++;
             continue;
           }
 
           // Embed and generate ID
-          const vector = await embed(content);
+          const vector = await embed(content, 'store');
           const pointId = record.id || crypto.randomUUID();
           const now = new Date().toISOString();
 

@@ -59,6 +59,7 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(key);
       CREATE INDEX IF NOT EXISTS idx_facts_client ON facts(client_id);
       CREATE INDEX IF NOT EXISTS idx_statuses_subject ON statuses(subject);
+      CREATE INDEX IF NOT EXISTS idx_statuses_client ON statuses(client_id);
     `);
 
     // Migrate: add knowledge_category to existing tables (safe if already exists)
@@ -241,6 +242,7 @@ export class PostgresStore {
 
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
+    if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.subject) { sql += ` AND subject ILIKE $${i++}`; params.push(`%${filters.subject}%`); }
 
     sql += ' ORDER BY updated_at DESC LIMIT 50';

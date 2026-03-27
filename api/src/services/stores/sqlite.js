@@ -67,6 +67,7 @@ export class SQLiteStore {
       CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(key);
       CREATE INDEX IF NOT EXISTS idx_facts_client ON facts(client_id);
       CREATE INDEX IF NOT EXISTS idx_statuses_subject ON statuses(subject);
+      CREATE INDEX IF NOT EXISTS idx_statuses_client ON statuses(client_id);
 
       CREATE TABLE IF NOT EXISTS entities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,23 +126,6 @@ export class SQLiteStore {
         console.warn('[sqlite] idx_eml_unique creation failed:', e.message);
       }
     }
-
-    // Entity relationships table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS entity_relationships (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        source_entity_id INTEGER REFERENCES entities(id),
-        target_entity_id INTEGER REFERENCES entities(id),
-        relationship_type TEXT NOT NULL DEFAULT 'co_occurrence',
-        strength INTEGER DEFAULT 1,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(source_entity_id, target_entity_id, relationship_type)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
-    `);
 
     // FTS5 virtual table for keyword search (BM25)
     try {
@@ -294,6 +278,7 @@ export class SQLiteStore {
 
     if (filters.source_agent) { sql += ' AND source_agent = @source_agent'; params.source_agent = filters.source_agent; }
     if (filters.category) { sql += ' AND category = @category'; params.category = filters.category; }
+    if (filters.client_id) { sql += ' AND client_id = @client_id'; params.client_id = filters.client_id; }
     if (filters.subject) { sql += ' AND subject LIKE @subject'; params.subject = `%${filters.subject}%`; }
 
     sql += ' ORDER BY updated_at DESC LIMIT 50';
