@@ -122,8 +122,14 @@ async function postgresKeywordSearch(queryText, filters, limit) {
 }
 
 function sqliteKeywordSearch(queryText, filters, limit) {
-  // FTS5 MATCH query — escape special characters
-  const safeQuery = queryText.replace(/['"*()]/g, ' ').trim();
+  // FTS5 MATCH query — strip special characters and reserved words
+  const FTS5_RESERVED = new Set(['AND', 'OR', 'NOT', 'NEAR']);
+  const safeQuery = queryText
+    .replace(/['"*(){}:^+\-]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !FTS5_RESERVED.has(w.toUpperCase()))
+    .join(' ')
+    .trim();
   if (!safeQuery) return [];
 
   let sql = `

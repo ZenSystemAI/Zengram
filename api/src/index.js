@@ -11,6 +11,7 @@ import { entitiesRouter } from './routes/entities.js';
 import { clientRouter } from './routes/client.js';
 import { exportRouter } from './routes/export.js';
 import { graphRouter } from './routes/graph.js';
+import { reflectRouter } from './routes/reflect.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance, getBackendType } from './services/stores/interface.js';
@@ -61,6 +62,7 @@ app.use('/entities', entitiesRouter);
 app.use('/client', clientRouter);
 app.use('/export', exportRouter);
 app.use('/graph', graphRouter);
+app.use('/reflect', reflectRouter);
 
 async function start() {
   try {

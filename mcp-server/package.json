@@ -1,6 +1,6 @@
 {
   "name": "@zensystemai/multi-agent-memory-mcp",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "type": "module",
   "description": "Persistent multi-path memory for AI agents — vector + BM25 keyword + entity graph search with RRF fusion, credential scrubbing, auto-consolidation, multi-backend storage (Qdrant + SQLite/Postgres)",
   "main": "src/index.js",

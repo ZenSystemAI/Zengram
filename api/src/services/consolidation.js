@@ -98,9 +98,15 @@ export async function runConsolidation() {
   const startTime = Date.now();
 
   try {
-    // Pull unconsolidated memories
-    const unconsolidated = await scrollPoints({ consolidated: false }, 200);
-    const points = unconsolidated.points || [];
+    // Pull ALL unconsolidated memories (paginated)
+    const points = [];
+    let scrollOffset = null;
+    do {
+      const result = await scrollPoints({ consolidated: false }, 200, scrollOffset);
+      const page = result.points || [];
+      points.push(...page);
+      scrollOffset = result.next_page_offset || null;
+    } while (scrollOffset);
 
     if (points.length === 0) {
       isRunning = false;
@@ -527,9 +533,17 @@ const EVENT_TTL_DAYS = parseInt(process.env.EVENT_TTL_DAYS) || 30;
 async function cleanupOldEvents() {
   const cutoff = new Date(Date.now() - EVENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Scroll events older than TTL that were never accessed and are medium/low importance
-  const result = await scrollPoints({ type: 'event' }, 200);
-  const points = (result.points || []).filter(p => {
+  // Scroll ALL events (paginated), then filter for old/unused/low-importance
+  const allEvents = [];
+  let scrollOffset = null;
+  do {
+    const result = await scrollPoints({ type: 'event' }, 200, scrollOffset);
+    const page = result.points || [];
+    allEvents.push(...page);
+    scrollOffset = result.next_page_offset || null;
+  } while (scrollOffset);
+
+  const points = allEvents.filter(p => {
     const pay = p.payload;
     return pay.active === true &&
       pay.access_count === 0 &&

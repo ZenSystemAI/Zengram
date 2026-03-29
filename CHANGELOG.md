@@ -4,6 +4,24 @@ This changelog covers the entire Multi-Agent Memory project (API, MCP server, ad
 
 The canonical source is [`mcp-server/CHANGELOG.md`](mcp-server/CHANGELOG.md) -- this file mirrors it for convenience.
 
+## 2.4.0 (2026-03-28)
+
+### New Features
+- **brain_reflect** — On-demand LLM synthesis across memories. Given a topic, searches relevant memories via multi-path retrieval and uses the LLM to identify patterns, timeline evolution, contradictions, and knowledge gaps. New MCP tool + `POST /reflect` API endpoint.
+- **brain_update** — Partial memory amendment without full supersede. Agents can update content, importance, knowledge_category, or metadata on existing memories. Content changes trigger re-embed, re-extract entities, and re-index. New MCP tool + `PATCH /memory/:id` API endpoint.
+- **Temporal validity** — Facts and statuses now support `valid_from` and `valid_to` timestamps, enabling "what was true at time X?" queries. Auto-sets `valid_to` on superseded memories. New `at_time` parameter on `brain_search`.
+
+### Bug Fixes
+- **Consolidation pagination** (P1): `runConsolidation()` and `cleanupOldEvents()` now paginate through ALL Qdrant points instead of only processing the first 200. Memories beyond the first page were silently missed.
+- **Briefing pagination** (P1): Session briefings now paginate through all matching events instead of truncating at the scroll limit.
+- **FTS5 query sanitization** (P2): SQLite keyword search now strips FTS5 reserved words (`AND`, `OR`, `NOT`, `NEAR`) and all special characters (`{}:^+-`) to prevent query errors.
+- **Search access_count race** (P2): Access count increment now batch-fetches current values before writing, reducing lost increments from concurrent searches.
+
+### Improvements
+- **README**: Comparison table updated with current market leaders (Mem0, Letta, Zep/Graphiti, Hindsight)
+- **Search**: Added `knowledge_category` filter to `brain_search`
+- **Qdrant**: `searchPoints` now supports range filters for temporal queries
+
 ## 2.3.1 (2026-03-29)
 
 ### Bug Fixes

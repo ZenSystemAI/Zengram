@@ -62,8 +62,25 @@ export function validateClientId(clientId) {
   return validateStringField(clientId, 'client_id', 64);
 }
 
+export function validateTemporalFields(valid_from, valid_to) {
+  if (valid_from !== undefined && valid_from !== null) {
+    if (typeof valid_from !== 'string' || isNaN(Date.parse(valid_from))) {
+      return 'valid_from must be a valid ISO 8601 timestamp';
+    }
+  }
+  if (valid_to !== undefined && valid_to !== null) {
+    if (typeof valid_to !== 'string' || isNaN(Date.parse(valid_to))) {
+      return 'valid_to must be a valid ISO 8601 timestamp';
+    }
+  }
+  if (valid_from && valid_to && new Date(valid_from) >= new Date(valid_to)) {
+    return 'valid_from must be before valid_to';
+  }
+  return null;
+}
+
 // Validate all inputs for POST /memory and return first error or null
-export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value }) {
+export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value, valid_from, valid_to }) {
   return validateType(type)
     || validateContent(content)
     || validateSourceAgent(source_agent)
@@ -73,6 +90,7 @@ export function validateMemoryInput({ type, content, source_agent, importance, m
     || validateStringField(key, 'key', 128)
     || validateStringField(subject, 'subject', 256)
     || validateStringField(status_value, 'status_value', 256)
+    || validateTemporalFields(valid_from, valid_to)
     || null;
 }
 

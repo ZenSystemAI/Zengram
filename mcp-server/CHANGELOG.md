@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.0 (2026-03-28)
+
+### New MCP Tools
+- **brain_reflect** — On-demand LLM synthesis. Searches relevant memories for a topic, synthesizes patterns/timeline/contradictions/gaps via LLM.
+- **brain_update** — Partial memory amendment. Update content, importance, knowledge_category, or metadata without full supersede. Content changes re-embed and re-index.
+
+### Enhanced Tools
+- **brain_store** — New `valid_from` and `valid_to` parameters for temporal validity on facts/statuses.
+- **brain_search** — New `at_time` parameter for point-in-time queries ("what was true at X?"). New `knowledge_category` filter.
+
+### Bug Fixes
+- Consolidation and briefing now paginate through all Qdrant points (P1: first 200 limit removed)
+- FTS5 keyword search sanitizes reserved words and special characters (P2)
+- Search access_count increment uses fresh values to reduce race conditions (P2)
+
 ## 2.3.1 (2026-03-29)
 
 ### Bug Fixes

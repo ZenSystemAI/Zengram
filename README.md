@@ -30,12 +30,15 @@
 
 Born from a production setup where [OpenClaw](https://github.com/openclaw/openclaw) agents, Claude Code, and n8n workflows needed to share memory across separate machines. Nothing existed that did this well, so we built it.
 
-### Latest: v2.3
+### Latest: v2.4
 
-- **Multi-Path Retrieval with RRF Fusion** — Search now runs three retrieval paths in parallel: vector similarity, BM25 keyword search (Postgres tsvector / SQLite FTS5), and graph BFS through entity relationships. Results are merged using Reciprocal Rank Fusion. Exact names and technical terms now surface reliably even when embeddings miss them. Feature-flagged via `MULTI_PATH_SEARCH=true` (default on). Use `format=full` in `brain_search` to see which paths contributed to each result.
+- **`brain_reflect`** — On-demand LLM synthesis. Ask "what do we know about X?" and get patterns, timeline, contradictions, and knowledge gaps across your stored memories.
+- **`brain_update`** — Amend existing memories in-place without full supersede. Content changes re-embed, re-extract entities, and re-index automatically.
+- **Temporal Validity** — Facts and statuses now support `valid_from`/`valid_to` timestamps. Query "what was true at time X?" via the new `at_time` parameter on `brain_search`.
+- **Pagination fixes** — Consolidation and briefings now process all memories, not just the first page.
 - **114 tests passing** across RRF, entity extraction, validation, scrubbing, notifications, and client resolver.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full release history including v2.2 (noise-free entity extraction, per-client knowledge base, Gemini Embedding 2) and earlier versions.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history including v2.3 (multi-path RRF search), v2.2 (noise-free entity extraction, per-client knowledge base), and earlier versions.
 
 <p align="center">
   <img src=".github/shared memory.jpg" alt="Shared Memory Architecture" width="340" />
@@ -171,22 +174,26 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 
 ### How It Compares
 
-| Feature | Multi-Agent Memory | [Mem0](https://github.com/mem0ai/mem0) | [mcp-memory-service](https://github.com/doobidoo/mcp-memory-service) | [Memorix](https://github.com/cline/memorix) |
-|---------|:-:|:-:|:-:|:-:|
-| Cross-machine by design | **Yes** | Self-host or Cloud | Via Cloudflare | No |
-| Typed memory (event/fact/status/decision) | **Yes** | No | No | No |
-| Entity extraction + linking | **Yes** | No | No | No |
-| Dual storage (vector + structured DB) | **Yes** | Vector + Graph | No | No |
-| LLM consolidation engine (scheduled batch) | **Yes** | Inline (at write) | No | No |
-| Memory decay / confidence scoring | **Yes** | No | No | No |
-| Content deduplication | **Hash + semantic** | LLM-based | No | No |
-| Credential scrubbing | **Yes** | No | No | No |
-| Timing-safe auth + rate limiting | **Yes** | No | No | No |
-| Session briefings | **Yes** | No | No | No |
-| Pluggable embeddings | OpenAI, Gemini, Ollama | Multiple | Local ONNX | No |
-| Pluggable storage backends | SQLite, Postgres, Baserow | Multiple vector DBs | SQLite, Cloudflare | File |
-| MCP server | **Yes** | Yes | Yes | Yes |
-| Self-hostable | **Yes** | Community ed. | Yes | Yes |
+| Feature | Multi-Agent Memory | [Mem0](https://github.com/mem0ai/mem0) | [Letta (MemGPT)](https://github.com/letta-ai/letta) | [Zep/Graphiti](https://github.com/getzep/graphiti) | [Hindsight](https://github.com/cyanheads/hindsight-core) |
+|---------|:-:|:-:|:-:|:-:|:-:|
+| Cross-machine by design | **Yes** | Cloud only | No | Cloud only | No |
+| Typed memory (event/fact/status/decision) | **Yes** | No | No | No | No |
+| Temporal validity (valid_from/valid_to) | **Yes** | No | No | **Yes** | No |
+| Entity extraction + linking | **Yes** | Graph (Pro) | No | **Yes** | No |
+| Multi-path search (vector+BM25+graph) | **Yes** | Vector only | Vector only | Hybrid | **Yes** |
+| RRF fusion | **Yes** | No | No | No | **Yes** |
+| LLM consolidation (scheduled) | **Yes** | Inline | Self-managed | No | Reflect |
+| On-demand reflection/synthesis | **Yes** | No | No | No | **Yes** |
+| Memory decay / confidence scoring | **Yes** | No | No | No | Partial |
+| Content deduplication | **Hash + semantic** | LLM-based | Agent-managed | Entity resolution | Hash |
+| Cross-agent corroboration | **Yes** | No | No | No | No |
+| Credential scrubbing | **Yes** | No | No | No | No |
+| Session briefings | **Yes** | No | No | No | No |
+| Pluggable embeddings | OpenAI, Gemini, Ollama | Multiple | Multiple | Multiple | Ollama |
+| Pluggable storage | SQLite, Postgres, Baserow | Multiple vector DBs | Postgres | Neo4j, FalkorDB | Postgres |
+| MCP server | **Yes** | Community | No | No | **Yes** |
+| Self-hostable (fully open) | **Yes** | Community ed. | **Yes** | Graphiti only | **Yes** |
+| License | MIT | Apache 2.0 | Apache 2.0 | Open core | MIT |
 
 ## Architecture
 
@@ -883,5 +890,5 @@ MIT License. See [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  Built by Steven Lefebvre <a href="https://zensystem.ai">ZenSystem</a> &mdash; Open Source from Quebec, Canada
+  Built by <a href="https://github.com/ZenSystemAI">ZenSystem AI</a>
 </p>

@@ -134,7 +134,7 @@ export async function upsertPoint(id, vector, payload) {
   });
 }
 
-export async function searchPoints(vector, filter = {}, limit = 10, nestedFilters = []) {
+export async function searchPoints(vector, filter = {}, limit = 10, nestedFilters = [], rangeFilters = []) {
   const body = {
     vector,
     limit,
@@ -159,6 +159,11 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
         filter: { must: [{ key: nf.key, match: { value: nf.value } }] },
       },
     });
+  }
+
+  // Support range filters (e.g., valid_from <= at_time)
+  for (const rf of rangeFilters) {
+    must.push({ key: rf.key, range: rf.range });
   }
 
   if (must.length > 0) {

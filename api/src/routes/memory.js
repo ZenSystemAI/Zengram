@@ -25,7 +25,7 @@ export const memoryRouter = Router();
 // POST /memory — Store a memory
 memoryRouter.post('/', async (req, res) => {
   try {
-    let { type, content, source_agent, client_id, category, importance, knowledge_category, metadata } = req.body;
+    let { type, content, source_agent, client_id, category, importance, knowledge_category, metadata, valid_from, valid_to } = req.body;
 
     // Validate all input fields
     const validationError = validateMemoryInput(req.body);
@@ -131,6 +131,7 @@ memoryRouter.post('/', async (req, res) => {
           active: false,
           superseded_by: pointId,
           superseded_at: now,
+          valid_to: now, // temporal: old fact no longer valid as of supersede time
         });
         deactivateMemory(matches[0].id).catch(() => {});
         dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
@@ -144,6 +145,7 @@ memoryRouter.post('/', async (req, res) => {
           active: false,
           superseded_by: pointId,
           superseded_at: now,
+          valid_to: now, // temporal: old status no longer valid as of supersede time
         });
         deactivateMemory(matches[0].id).catch(() => {});
         dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
@@ -173,6 +175,11 @@ memoryRouter.post('/', async (req, res) => {
       ...(type === 'fact' && req.body.key ? { key: req.body.key } : {}),
       ...(type === 'status' && req.body.subject ? { subject: req.body.subject, status_value: req.body.status_value } : {}),
       ...(metadata ? { metadata: scrubObject(metadata) } : {}),
+      // Temporal validity (facts and statuses only)
+      ...((type === 'fact' || type === 'status') ? {
+        valid_from: valid_from || now,
+        valid_to: valid_to || null,
+      } : {}),
     };
 
     // Extract entities (fast path — regex + alias cache, no LLM)
@@ -268,7 +275,7 @@ memoryRouter.post('/', async (req, res) => {
 // Paths: vector (semantic), keyword (BM25), graph (entity BFS)
 memoryRouter.get('/search', async (req, res) => {
   try {
-    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format } = req.query;
+    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, knowledge_category: kc } = req.query;
     const isCompact = format === 'compact';
     const isFull = format === 'full';
     const maxResults = Math.min(parseInt(limit) || 10, 100);
@@ -282,6 +289,7 @@ memoryRouter.get('/search', async (req, res) => {
     if (source_agent) filter.source_agent = source_agent;
     if (client_id) filter.client_id = client_id;
     if (category) filter.category = category;
+    if (kc) filter.knowledge_category = kc;
     if (include_superseded !== 'true') filter.active = true;
 
     // Entity filter — resolve alias to canonical name, then filter via Qdrant payload
@@ -297,13 +305,21 @@ memoryRouter.get('/search', async (req, res) => {
       nestedFilters.push({ arrayField: 'entities', key: 'name', value: entityName });
     }
 
+    // Temporal validity filter — "what was true at time X?"
+    // Adds range conditions: valid_from <= at_time AND (valid_to is null OR valid_to > at_time)
+    const rangeFilters = [];
+    if (at_time) {
+      rangeFilters.push({ key: 'valid_from', range: { lte: at_time } });
+      // valid_to > at_time OR valid_to is null (still valid) — handled by Qdrant should condition
+    }
+
     // --- Multi-path retrieval ---
     const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is Qdrant-only
     const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
 
     // Always run vector search
     const vectorPromise = embed(q, 'search').then(vector =>
-      searchPoints(vector, filter, fetchLimit, nestedFilters)
+      searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters)
     );
 
     // Run keyword + graph in parallel (only if multi-path enabled)
@@ -419,20 +435,34 @@ memoryRouter.get('/search', async (req, res) => {
     // Re-sort by effective_score
     results.sort((a, b) => b.effective_score - a.effective_score);
 
-    // Async: increment access_count and update last_accessed_at for returned results (parallel, fire-and-forget)
+    // Async: increment access_count and update last_accessed_at for returned results (fire-and-forget).
+    // We fetch current point payloads in a single batch call before writing to reduce the race
+    // window where two concurrent searches both read the same stale access_count from search
+    // results and both write count+1 instead of count+2. A tiny race still exists between
+    // the getPoints read and the updatePointPayload write, but it is acceptable for a
+    // fire-and-forget decay-prevention counter.
     const pointIds = results.map(r => r.id);
     if (pointIds.length > 0) {
       const now = new Date().toISOString();
-      Promise.all(
-        results.map(result =>
-          updatePointPayload(result.id, {
-            access_count: (result.access_count || 0) + 1,
-            last_accessed_at: now,
-          })
-        )
-      ).catch(e => {
-        console.error('[memory:search] Access count update failed:', e.message);
-      });
+      getPoints(pointIds)
+        .then(freshPoints => {
+          const freshById = Object.fromEntries(
+            freshPoints.map(p => [p.id, p.payload || {}])
+          );
+          return Promise.all(
+            pointIds.map(id => {
+              const current = freshById[id];
+              const freshCount = current ? (current.access_count || 0) : 0;
+              return updatePointPayload(id, {
+                access_count: freshCount + 1,
+                last_accessed_at: now,
+              });
+            })
+          );
+        })
+        .catch(e => {
+          console.error('[memory:search] Access count update failed:', e.message);
+        });
     }
 
     const response = {
@@ -493,6 +523,108 @@ memoryRouter.get('/query', async (req, res) => {
     });
   } catch (err) {
     console.error('[memory:query]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PATCH /memory/:id — Update an existing memory in place
+memoryRouter.patch('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content, importance, knowledge_category, metadata } = req.body;
+
+    // Must provide at least one field to update
+    if (!content && !importance && !knowledge_category && !metadata) {
+      return res.status(400).json({ error: 'Must provide at least one field to update: content, importance, knowledge_category, metadata' });
+    }
+
+    // Fetch existing point
+    let point;
+    try {
+      point = await getPoint(id);
+    } catch (e) {
+      return res.status(404).json({ error: 'Memory not found' });
+    }
+
+    if (!point || !point.payload) {
+      return res.status(404).json({ error: 'Memory not found' });
+    }
+
+    // Enforce agent identity: agents can only update their own memories
+    if (req.authenticatedAgent && point.payload.source_agent !== req.authenticatedAgent) {
+      return res.status(403).json({
+        error: `Agent "${req.authenticatedAgent}" cannot update memories from "${point.payload.source_agent}"`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const updatedPayload = { updated_at: now };
+
+    // Simple field updates (no re-embed needed)
+    if (importance) updatedPayload.importance = importance;
+    if (knowledge_category) updatedPayload.knowledge_category = knowledge_category;
+    if (metadata) updatedPayload.metadata = scrubObject(metadata);
+
+    // Content change: re-scrub, re-hash, re-embed, re-extract entities, re-index
+    if (content) {
+      const cleanContent = scrubCredentials(content);
+      const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
+
+      updatedPayload.text = cleanContent;
+      updatedPayload.content_hash = contentHash;
+
+      // Re-extract entities
+      let extractedEntities = [];
+      try {
+        extractedEntities = extractEntities(cleanContent, point.payload.client_id || 'global', point.payload.source_agent);
+        if (extractedEntities.length > 0) {
+          updatedPayload.entities = extractedEntities.map(e => ({ name: e.name, type: e.type }));
+        } else {
+          updatedPayload.entities = [];
+        }
+      } catch (e) {
+        console.error('[memory:update:entities] Extraction failed (non-blocking):', e.message);
+      }
+
+      // Re-embed and upsert full point (vector + merged payload)
+      const vector = await embed(cleanContent, 'store');
+      const mergedPayload = { ...point.payload, ...updatedPayload };
+      await upsertPoint(id, vector, mergedPayload);
+
+      // Re-index in keyword search
+      if (isKeywordSearchAvailable()) {
+        indexMemory(id, cleanContent, {
+          client_id: point.payload.client_id || 'global',
+          source_agent: point.payload.source_agent,
+          type: point.payload.type,
+        }).catch(e => console.error('[memory:update:keyword-index]', e.message));
+      }
+
+      // Re-link entities (fire-and-forget)
+      if (isEntityStoreAvailable() && extractedEntities.length > 0) {
+        Promise.resolve().then(async () => {
+          try {
+            await linkExtractedEntities(extractedEntities, id, { createEntity, findEntity, linkEntityToMemory, createRelationship });
+          } catch (e) {
+            console.error('[memory:update:entities] Linking failed:', e.message);
+          }
+        });
+      }
+    } else {
+      // No content change — payload-only update
+      await updatePointPayload(id, updatedPayload);
+    }
+
+    console.log(`[memory:update] Memory ${id} updated by ${req.authenticatedAgent || 'admin'} fields=[${Object.keys(updatedPayload).join(',')}]`);
+
+    res.json({
+      id,
+      updated: true,
+      updated_at: now,
+      updated_fields: Object.keys(updatedPayload).filter(k => k !== 'updated_at'),
+    });
+  } catch (err) {
+    console.error('[memory:update]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

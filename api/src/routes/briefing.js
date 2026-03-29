@@ -22,11 +22,19 @@ briefingRouter.get('/', async (req, res) => {
       });
     }
 
-    // Get recent events from Qdrant
+    // Get recent events from Qdrant (paginated scroll)
     const scrollLimit = Math.min(Math.max(parseInt(limitParam) || 100, 1), 500);
     const filter = { created_after: since };
-    const recent = await scrollPoints(filter, scrollLimit);
-    const points = recent.points || [];
+    const PAGE_SIZE = 100;
+    let scrollOffset = null;
+    const points = [];
+    do {
+      const result = await scrollPoints(filter, PAGE_SIZE, scrollOffset);
+      const batch = result.points || [];
+      points.push(...batch);
+      scrollOffset = result.next_page_offset || null;
+      if (points.length >= scrollLimit) break;
+    } while (scrollOffset);
 
     // Filter points: exclude requesting agent's own entries (unless include=all)
     const filteredPoints = points.filter(point => {

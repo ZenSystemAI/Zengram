@@ -41,7 +41,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: 'shared-brain', version: '2.3.1' },
+  { name: 'shared-brain', version: '2.4.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -97,6 +97,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
             description: 'Domain category: brand=voice/identity, strategy=plans/positioning, meeting=call takeaways, content=published work, technical=hosting/CMS/SEO issues, relationship=contacts/preferences, general=default',
           },
+          valid_from: {
+            type: 'string',
+            description: 'For facts/statuses: ISO 8601 timestamp when this fact became true. Defaults to created_at.',
+          },
+          valid_to: {
+            type: 'string',
+            description: 'For facts/statuses: ISO 8601 timestamp when this fact stopped being true. Null means still valid. Auto-set when superseded.',
+          },
         },
         required: ['type', 'content', 'source_agent'],
       },
@@ -141,6 +149,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
             description: 'Filter by knowledge category (optional)',
+          },
+          at_time: {
+            type: 'string',
+            description: 'ISO 8601 timestamp. Return only memories that were valid at this point in time (valid_from <= at_time AND valid_to is null or > at_time). For "what was true at X?" queries.',
           },
         },
         required: ['query'],
@@ -289,6 +301,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'brain_update',
+      description: 'Update an existing memory\'s content, importance, or category without creating a new version. Re-embeds and re-indexes if content changes. Agents can only update their own memories.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          memory_id: {
+            type: 'string',
+            description: 'The UUID of the memory to update',
+          },
+          content: {
+            type: 'string',
+            description: 'New content text (triggers re-embed, re-hash, re-index)',
+          },
+          importance: {
+            type: 'string',
+            enum: ['critical', 'high', 'medium', 'low'],
+            description: 'New importance level',
+          },
+          knowledge_category: {
+            type: 'string',
+            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            description: 'New knowledge category',
+          },
+          metadata: {
+            type: 'object',
+            description: 'Updated metadata object (replaces existing metadata)',
+          },
+        },
+        required: ['memory_id'],
+      },
+    },
+    {
       name: 'brain_client',
       description: 'Get everything known about a client — brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "AL" resolves to "acme-loans").',
       inputSchema: {
@@ -326,6 +370,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['data'],
       },
     },
+    {
+      name: 'brain_reflect',
+      description: 'Reflect on a topic by synthesizing patterns across stored memories. Searches relevant memories using multi-path retrieval, then uses LLM to analyze and produce insights about patterns, timeline evolution, contradictions, and knowledge gaps. Use this for "what do we know about X?", "what patterns do you see?", or "what\'s missing?"',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'The topic or question to reflect on. Can be a concept, client name, technology, or any subject.',
+          },
+          client_id: {
+            type: 'string',
+            description: 'Scope reflection to a specific client (optional)',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max memories to analyze (default 20, max 50). More memories = richer analysis but slower.',
+          },
+        },
+        required: ['topic'],
+      },
+    },
   ],
 }));
 
@@ -356,6 +422,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             subject: args.subject,
             status_value: args.status_value,
             knowledge_category: args.knowledge_category,
+            valid_from: args.valid_from,
+            valid_to: args.valid_to,
           }),
         });
         break;
@@ -372,6 +440,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         params.append('format', args.format || 'compact');
         if (args.include_superseded) params.append('include_superseded', 'true');
         if (args.knowledge_category) params.append('knowledge_category', args.knowledge_category);
+        if (args.at_time) params.append('at_time', args.at_time);
         result = await apiRequest(`/memory/search?${params}`);
         break;
       }
@@ -435,6 +504,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
         break;
 
+      case 'brain_update': {
+        if (!args.memory_id || typeof args.memory_id !== 'string' || !args.memory_id.trim()) {
+          return { content: [{ type: 'text', text: 'Error: memory_id is required' }], isError: true };
+        }
+        const updateBody = {};
+        if (args.content) updateBody.content = args.content;
+        if (args.importance) updateBody.importance = args.importance;
+        if (args.knowledge_category) updateBody.knowledge_category = args.knowledge_category;
+        if (args.metadata) updateBody.metadata = args.metadata;
+        if (Object.keys(updateBody).length === 0) {
+          return { content: [{ type: 'text', text: 'Error: must provide at least one field to update (content, importance, knowledge_category, metadata)' }], isError: true };
+        }
+        result = await apiRequest(`/memory/${encodeURIComponent(args.memory_id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(updateBody),
+        });
+        break;
+      }
+
       case 'brain_entities': {
         const action = args.action || 'list';
         if ((action === 'get' || action === 'memories') && !args.name) {
@@ -486,6 +574,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await apiRequest('/export/import', {
           method: 'POST',
           body: JSON.stringify({ data: args.data }),
+        });
+        break;
+      }
+
+      case 'brain_reflect': {
+        if (!args.topic || typeof args.topic !== 'string' || !args.topic.trim()) {
+          return { content: [{ type: 'text', text: 'Error: "topic" is required (non-empty string)' }], isError: true };
+        }
+        result = await apiRequest('/reflect', {
+          method: 'POST',
+          body: JSON.stringify({
+            topic: args.topic,
+            client_id: args.client_id,
+            limit: args.limit,
+          }),
+          timeout: CONSOLIDATION_TIMEOUT,
         });
         break;
       }
