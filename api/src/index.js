@@ -20,6 +20,10 @@ import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 import { loadAliasCache } from './services/entities.js';
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandled-rejection]', reason);
+});
+
 // Validate required environment variables
 if (!process.env.BRAIN_API_KEY) {
   console.error('[shared-brain] FATAL: BRAIN_API_KEY is required. Set it in .env or environment.');
@@ -119,7 +123,11 @@ async function start() {
     // Graceful shutdown
     const shutdown = (signal) => {
       console.log(`[shared-brain] ${signal} received — shutting down gracefully...`);
-      server.close(() => {
+      server.close(async () => {
+        try {
+          const store = _getStoreInstance();
+          await store?.close?.();
+        } catch (e) { /* best-effort */ }
         console.log('[shared-brain] HTTP server closed');
         process.exit(0);
       });

@@ -9,13 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
 
       - name: Install API dependencies
         run: cd api && npm install
@@ -23,10 +26,16 @@ jobs:
       - name: Install MCP server dependencies
         run: cd mcp-server && npm install
 
+      - name: Security audit
+        working-directory: api
+        run: npm audit --audit-level=high || true
+
       - name: Run tests
         run: cd api && npm test
 
-      - name: Validate MCP server entrypoint
-        run: cd mcp-server && timeout 5 node src/index.js 2>&1 || true
+      - name: Validate MCP server starts
+        working-directory: mcp-server
+        run: |
+          timeout 5 node src/index.js 2>&1 | head -1 || test $? -eq 124
         env:
           BRAIN_API_KEY: test-key

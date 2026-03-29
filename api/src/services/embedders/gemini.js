@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 const TASK_TYPE_MAP = {
   store: 'RETRIEVAL_DOCUMENT',
   search: 'RETRIEVAL_QUERY',
@@ -30,11 +32,11 @@ export class GeminiEmbedder {
       body.taskType = taskType;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }, 60000);
 
     if (!response.ok) {
       const errBody = await response.text();

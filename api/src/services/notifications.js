@@ -1,3 +1,5 @@
+import fetchWithTimeout from './fetch-with-timeout.js';
+
 const WEBHOOK_URLS = (process.env.WEBHOOK_NOTIFY_URLS || '')
   .split(',')
   .map(u => u.trim())
@@ -24,11 +26,11 @@ export function dispatchNotification(event, memory) {
   const payload = buildNotificationPayload(event, memory);
 
   for (const url of WEBHOOK_URLS) {
-    fetch(url, {
+    fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    }).catch(err => {
+    }, 10000).catch(err => {
       console.warn(`[notifications] Webhook failed for ${url}: ${err.message}`);
     });
   }

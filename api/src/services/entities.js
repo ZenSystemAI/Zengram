@@ -28,6 +28,14 @@ const KNOWN_TECH = {
   'langchain': 'LangChain', 'lighthouse': 'Lighthouse',
 };
 
+// Pre-compiled regex patterns for KNOWN_TECH — avoids creating a new RegExp per keyword per call
+const KNOWN_TECH_PATTERNS = new Map(
+  Object.entries(KNOWN_TECH).map(([keyword, canonical]) => {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [keyword, { pattern: new RegExp(`\\b${escaped}\\b`, 'i'), label: canonical }];
+  })
+);
+
 const DOMAIN_REGEX = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|ca|org|net|io|dev|app|co|fr|uk|de|ai)\b/gi;
 const QUOTED_NAME_REGEX = /[""\u201C\u201D`]([^""\u201C\u201D`]{3,60})[""\u201C\u201D`]/g;
 const CAPITALIZED_PHRASE_REGEX = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+)\b/g;
@@ -256,13 +264,11 @@ export function extractEntities(text, clientId, sourceAgent) {
     add(domain.toLowerCase(), 'domain', 'mentioned');
   }
 
-  // 4. Known technology names
+  // 4. Known technology names (using pre-compiled regex patterns)
   const lowerText = ` ${text.toLowerCase()} `;
-  for (const [keyword, canonical] of Object.entries(KNOWN_TECH)) {
-    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`\\b${escaped}\\b`, 'i');
-    if (re.test(lowerText)) {
-      add(canonical, 'technology', 'mentioned');
+  for (const [, { pattern, label }] of KNOWN_TECH_PATTERNS) {
+    if (pattern.test(lowerText)) {
+      add(label, 'technology', 'mentioned');
     }
   }
 

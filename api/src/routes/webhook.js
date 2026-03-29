@@ -56,7 +56,7 @@ webhookRouter.post('/n8n', async (req, res) => {
 
     // Dedup: if identical content already exists, check for corroboration
     const sourceAgent = 'n8n';
-    const duplicates = await findByPayload('content_hash', contentHash, { active: true });
+    const duplicates = await findByPayload('content_hash', contentHash, { active: true, client_id: client_id || 'global', type: 'event' });
     if (duplicates.length > 0) {
       const existing = duplicates[0];
       const existingObservedBy = existing.payload.observed_by || [existing.payload.source_agent];
@@ -188,7 +188,7 @@ webhookRouter.post('/n8n', async (req, res) => {
     if (warnings.length > 0) response.warnings = warnings;
     res.status(201).json(response);
   } catch (err) {
-    console.error('[webhook:n8n] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[webhook:n8n]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -528,11 +528,10 @@ async function cleanupOldEvents() {
   const cutoff = new Date(Date.now() - EVENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // Scroll events older than TTL that were never accessed and are medium/low importance
-  const result = await scrollPoints({}, 200);
+  const result = await scrollPoints({ type: 'event' }, 200);
   const points = (result.points || []).filter(p => {
     const pay = p.payload;
-    return pay.type === 'event' &&
-      pay.active === true &&
+    return pay.active === true &&
       pay.access_count === 0 &&
       pay.created_at < cutoff &&
       (pay.importance === 'medium' || pay.importance === 'low');

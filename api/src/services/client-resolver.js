@@ -1,3 +1,5 @@
+import fetchWithTimeout from './fetch-with-timeout.js';
+
 // Client fingerprint resolver — identifies which client a piece of text is about
 // Uses alias/people/domain/keyword matching with accent normalization
 
@@ -170,9 +172,9 @@ export async function initClientResolver() {
 
   try {
     const url = `${baserowUrl}/api/database/rows/table/${tableId}/?user_field_names=true&size=100`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { Authorization: `Token ${token}` },
-    });
+    }, 15000);
 
     if (!response.ok) {
       console.warn(`[client-resolver] Baserow returned ${response.status} — resolver will be empty`);

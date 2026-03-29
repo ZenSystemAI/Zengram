@@ -22,8 +22,8 @@ entitiesRouter.get('/', async (req, res) => {
       entities: result.results,
     });
   } catch (err) {
-    console.error('[entities] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[entities]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -36,8 +36,8 @@ entitiesRouter.get('/stats', async (req, res) => {
     const stats = await getEntityStats();
     res.json(stats);
   } catch (err) {
-    console.error('[entities:stats] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[entities:stats]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -63,8 +63,8 @@ entitiesRouter.get('/:name', async (req, res) => {
       aliases: entity.aliases || [],
     });
   } catch (err) {
-    console.error('[entities:get] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[entities:get]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -90,7 +90,7 @@ entitiesRouter.get('/:name/memories', async (req, res) => {
       memory_links: links.results,
     });
   } catch (err) {
-    console.error('[entities:memories] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[entities:memories]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

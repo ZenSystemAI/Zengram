@@ -10,6 +10,12 @@ Thanks for your interest in contributing! This project aims to be the best open-
 4. Make your changes
 5. Push and open a pull request
 
+## Prerequisites
+
+- **Node.js 20+** (required -- the codebase uses modern ES module features)
+- Docker (for Qdrant)
+- An OpenAI or Gemini API key (or local Ollama for embeddings)
+
 ## Development Setup
 
 ```bash
@@ -27,12 +33,16 @@ npm install
 npm start
 ```
 
-You'll need:
-- Node.js 20+
-- Docker (for Qdrant)
-- An OpenAI API key (or local Ollama for embeddings)
-
 Copy `.env.example` to `.env` and fill in your keys.
+
+## Running Tests
+
+```bash
+cd api
+npm test
+```
+
+Tests cover validation middleware, entity extraction, credential scrubbing, RRF fusion, webhook notifications, and client resolution. All tests must pass before submitting a PR.
 
 ## Project Structure
 
@@ -59,7 +69,7 @@ Open an issue first to discuss your approach. This avoids duplicate work and ens
 ## Code Style
 
 - ES modules (`import`/`export`, not `require`)
-- No TypeScript (keeping it simple for v1)
+- No TypeScript -- keeping the codebase accessible
 - Minimal dependencies — don't add a package for something you can write in 20 lines
 - Error messages should be helpful and include context
 

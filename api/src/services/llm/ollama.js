@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 export class OllamaProvider {
   constructor() {
     this.model = process.env.CONSOLIDATION_MODEL || 'llama3.2';
@@ -5,7 +7,7 @@ export class OllamaProvider {
   }
 
   async complete(prompt, options = {}) {
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -21,7 +23,7 @@ export class OllamaProvider {
         },
         format: 'json',
       }),
-    });
+    }, 300000);
 
     if (!response.ok) {
       const body = await response.text();

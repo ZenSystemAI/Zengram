@@ -166,7 +166,7 @@ briefingRouter.get('/', async (req, res) => {
 
     res.json(briefing);
   } catch (err) {
-    console.error('[briefing] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[briefing]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

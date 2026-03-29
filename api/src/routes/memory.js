@@ -259,8 +259,8 @@ memoryRouter.post('/', async (req, res) => {
       ...(keyWarning ? { warning: keyWarning } : {}),
     });
   } catch (err) {
-    console.error('[memory:store] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[memory:store]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -419,21 +419,19 @@ memoryRouter.get('/search', async (req, res) => {
     // Re-sort by effective_score
     results.sort((a, b) => b.effective_score - a.effective_score);
 
-    // Async: increment access_count and update last_accessed_at for returned results
+    // Async: increment access_count and update last_accessed_at for returned results (parallel, fire-and-forget)
     const pointIds = results.map(r => r.id);
     if (pointIds.length > 0) {
-      Promise.resolve().then(async () => {
-        try {
-          const now = new Date().toISOString();
-          for (const result of results) {
-            await updatePointPayload(result.id, {
-              access_count: (result.access_count || 0) + 1,
-              last_accessed_at: now,
-            });
-          }
-        } catch (e) {
-          console.error('[memory:search] Access count update failed:', e.message);
-        }
+      const now = new Date().toISOString();
+      Promise.all(
+        results.map(result =>
+          updatePointPayload(result.id, {
+            access_count: (result.access_count || 0) + 1,
+            last_accessed_at: now,
+          })
+        )
+      ).catch(e => {
+        console.error('[memory:search] Access count update failed:', e.message);
       });
     }
 
@@ -457,8 +455,8 @@ memoryRouter.get('/search', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    console.error('[memory:search] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[memory:search]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -494,8 +492,8 @@ memoryRouter.get('/query', async (req, res) => {
       results: results.results || [],
     });
   } catch (err) {
-    console.error('[memory:query] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[memory:query]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -548,7 +546,7 @@ memoryRouter.delete('/:id', async (req, res) => {
       deleted_by: req.authenticatedAgent || 'admin',
     });
   } catch (err) {
-    console.error('[memory:delete] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[memory:delete]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

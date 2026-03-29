@@ -40,7 +40,9 @@ export async function initQdrant() {
     console.log(`[qdrant] Collection '${COLLECTION}' exists`);
     return;
   } catch (e) {
-    // Collection doesn't exist, create it
+    if (!e.message || !e.message.includes('404')) {
+      throw e;
+    }
   }
 
   const embeddingDims = getEmbeddingDimensions();
@@ -264,35 +266,38 @@ export function computeEffectiveConfidence(payload) {
 export async function getMemoryStats() {
   const info = await getCollectionInfo();
 
-  // Count by active/inactive
-  const activeResult = await qdrantRequest(`/collections/${COLLECTION}/points/count`, {
-    method: 'POST',
-    body: JSON.stringify({
-      filter: { must: [{ key: 'active', match: { value: true } }] },
-      exact: true,
-    }),
-  });
-
-  const consolidatedResult = await qdrantRequest(`/collections/${COLLECTION}/points/count`, {
-    method: 'POST',
-    body: JSON.stringify({
-      filter: { must: [{ key: 'consolidated', match: { value: true } }] },
-      exact: true,
-    }),
-  });
-
-  // Count by type
-  const typeCounts = {};
-  for (const type of ['event', 'fact', 'decision', 'status']) {
-    const r = await qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+  // Run all count queries in parallel
+  const types = ['event', 'fact', 'decision', 'status'];
+  const [activeResult, consolidatedResult, ...typeResults] = await Promise.all([
+    qdrantRequest(`/collections/${COLLECTION}/points/count`, {
       method: 'POST',
       body: JSON.stringify({
-        filter: { must: [{ key: 'type', match: { value: type } }] },
+        filter: { must: [{ key: 'active', match: { value: true } }] },
         exact: true,
       }),
-    });
-    typeCounts[type] = r.result?.count || 0;
-  }
+    }),
+    qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: { must: [{ key: 'consolidated', match: { value: true } }] },
+        exact: true,
+      }),
+    }),
+    ...types.map(type =>
+      qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+        method: 'POST',
+        body: JSON.stringify({
+          filter: { must: [{ key: 'type', match: { value: type } }] },
+          exact: true,
+        }),
+      })
+    ),
+  ]);
+
+  const typeCounts = {};
+  types.forEach((type, i) => {
+    typeCounts[type] = typeResults[i].result?.count || 0;
+  });
 
   return {
     total_memories: info.points_count,

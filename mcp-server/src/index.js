@@ -41,7 +41,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: 'shared-brain', version: '2.0.0' },
+  { name: 'shared-brain', version: '2.3.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -209,18 +209,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_consolidate',
-      description: 'Trigger a memory consolidation run. An LLM analyzes unconsolidated memories to find duplicates to merge, contradictions to flag, connections between memories, and cross-memory insights. Runs automatically on a schedule, but can be triggered manually.',
+      description: 'Trigger a memory consolidation run. An LLM analyzes unconsolidated memories to find duplicates to merge, contradictions to flag, connections between memories, and cross-memory insights. Runs automatically on a schedule, but can be triggered manually. Default action "run" is async (returns a job_id you can poll with action="job"). Pass sync=true to block until consolidation completes.',
       inputSchema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
             enum: ['run', 'status', 'job'],
-            description: 'run=trigger consolidation now (sync), status=check consolidation status, job=poll async job by job_id. Default: run',
+            description: 'run=trigger consolidation (async by default, returns job_id), status=check consolidation status, job=poll async job by job_id. Default: run',
           },
           job_id: {
             type: 'string',
             description: 'For action=job: the job ID returned by an async consolidation trigger',
+          },
+          sync: {
+            type: 'boolean',
+            description: 'For action=run: set to true to block until consolidation completes instead of returning a job_id. Default: false',
           },
         },
       },
@@ -300,13 +304,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_export',
-      description: 'Export shared memories as JSON for backup or migration. Returns all memory payloads (no vectors). Use before switching embedding providers.',
+      description: 'Export shared memories as JSON for backup or migration. Returns memory payloads (no vectors). WARNING: Can return very large responses — use limit, client_id, type, or since filters to avoid exceeding MCP message size limits. Default limit is 500.',
       inputSchema: {
         type: 'object',
         properties: {
           client_id: { type: 'string', description: 'Filter by client (optional)' },
           type: { type: 'string', enum: ['event', 'fact', 'decision', 'status'], description: 'Filter by type (optional)' },
           since: { type: 'string', description: 'ISO 8601 timestamp — only memories after this time (optional)' },
+          limit: { type: 'number', description: 'Max memories to export (default 500). Use to prevent oversized responses.' },
         },
       },
     },
@@ -332,6 +337,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       case 'brain_store':
+        if (!args.type || typeof args.type !== 'string') {
+          return { content: [{ type: 'text', text: 'Error: "type" is required (one of: event, fact, decision, status)' }], isError: true };
+        }
+        if (!args.content || typeof args.content !== 'string' || !args.content.trim()) {
+          return { content: [{ type: 'text', text: 'Error: "content" is required (non-empty string)' }], isError: true };
+        }
         result = await apiRequest('/memory', {
           method: 'POST',
           body: JSON.stringify({
@@ -350,6 +361,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case 'brain_search': {
+        if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
+          return { content: [{ type: 'text', text: 'Error: "query" is required (non-empty string)' }], isError: true };
+        }
         const params = new URLSearchParams({ q: args.query });
         if (args.type) params.append('type', args.type);
         if (args.source_agent) params.append('source_agent', args.source_agent);
@@ -394,8 +408,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         } else if (args.action === 'job' && args.job_id) {
           result = await apiRequest(`/consolidate/job/${encodeURIComponent(args.job_id)}`);
         } else {
-          // Default: async mode (returns job_id); use ?sync=true for blocking
-          result = await apiRequest('/consolidate?sync=true', { method: 'POST' });
+          // Default: async mode (returns job_id); pass ?sync=true only when explicitly requested
+          const consolidateParams = new URLSearchParams();
+          if (args.sync) consolidateParams.set('sync', 'true');
+          const consolidateQs = consolidateParams.toString() ? `?${consolidateParams.toString()}` : '';
+          result = await apiRequest(`/consolidate${consolidateQs}`, { method: 'POST' });
         }
         break;
 
@@ -409,7 +426,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'brain_delete':
-        if (!args.memory_id) {
+        if (!args.memory_id || typeof args.memory_id !== 'string' || !args.memory_id.trim()) {
           return { content: [{ type: 'text', text: 'Error: memory_id is required' }], isError: true };
         }
         result = await apiRequest(`/memory/${encodeURIComponent(args.memory_id)}`, {
@@ -441,6 +458,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'brain_client': {
+        if (!args.client || typeof args.client !== 'string' || !args.client.trim()) {
+          return { content: [{ type: 'text', text: 'Error: "client" is required (client ID or fuzzy name)' }], isError: true };
+        }
         const { client, category, query, format } = args;
         const params = new URLSearchParams();
         if (category) params.set('category', category);
@@ -456,7 +476,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.client_id) exportParams.set('client_id', args.client_id);
         if (args.type) exportParams.set('type', args.type);
         if (args.since) exportParams.set('since', args.since);
-        const exportQs = exportParams.toString() ? `?${exportParams.toString()}` : '';
+        exportParams.set('limit', String(args.limit || 500));
+        const exportQs = `?${exportParams.toString()}`;
         result = await apiRequest(`/export${exportQs}`);
         break;
       }

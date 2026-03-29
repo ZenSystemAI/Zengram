@@ -81,3 +81,13 @@ export function authMiddleware(req, res, next) {
   recordFailure(ip);
   return res.status(401).json({ error: 'Invalid API key' });
 }
+
+// Periodic cleanup of expired failedAttempts entries (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of failedAttempts) {
+    if (now - record.windowStart > WINDOW_MS) {
+      failedAttempts.delete(ip);
+    }
+  }
+}, 300_000).unref();

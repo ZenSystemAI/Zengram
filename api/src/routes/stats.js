@@ -56,7 +56,7 @@ statsRouter.get('/', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('[stats] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[stats]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

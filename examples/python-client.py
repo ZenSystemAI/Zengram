@@ -201,6 +201,190 @@ class BrainClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ----- Delete a memory -----
+
+    def delete(self, memory_id: str, reason: str | None = None) -> dict:
+        """
+        Soft-delete a memory (marks it inactive).
+
+        Agent-scoped API keys can only delete their own memories.
+
+        Args:
+            memory_id: The UUID of the memory to delete.
+            reason:    Optional reason for the deletion (logged for audit).
+
+        Returns:
+            API response dict confirming the deletion.
+        """
+        payload = {}
+        if reason is not None:
+            payload["reason"] = reason
+
+        resp = self.session.delete(
+            f"{self.api_url}/memory/{memory_id}", json=payload
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ----- Entity graph -----
+
+    def entities(self, limit: int = 50, offset: int = 0, entity_type: str | None = None) -> dict:
+        """
+        List all entities in the knowledge graph.
+
+        Args:
+            limit:       Max results (default 50).
+            offset:      Pagination offset.
+            entity_type: Filter by type (client, technology, person, etc.).
+
+        Returns:
+            Dict with entity list.
+        """
+        params = {"limit": limit, "offset": offset}
+        if entity_type:
+            params["type"] = entity_type
+
+        resp = self.session.get(f"{self.api_url}/entities", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def entity(self, name: str) -> dict:
+        """
+        Get a single entity by name or alias. Includes alias list and metadata.
+
+        Args:
+            name: Entity canonical name or alias.
+
+        Returns:
+            Entity details dict.
+        """
+        resp = self.session.get(f"{self.api_url}/entities/{name}")
+        resp.raise_for_status()
+        return resp.json()
+
+    # ----- Client briefing -----
+
+    def client(self, name: str, format: str = "compact", category: str | None = None) -> dict:
+        """
+        Get a comprehensive client briefing — all memories grouped by
+        knowledge_category (brand, strategy, meeting, content, technical,
+        relationship, general).
+
+        Supports fuzzy name resolution: "acme", "Acme Corp", and "acme-corp"
+        all resolve to the same client.
+
+        Args:
+            name:     Client name or slug (fuzzy matched).
+            format:   'compact' (default) or 'full'.
+            category: Filter by knowledge_category.
+
+        Returns:
+            Client briefing dict grouped by category.
+        """
+        params = {"format": format}
+        if category:
+            params["category"] = category
+
+        resp = self.session.get(f"{self.api_url}/client/{name}", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ----- Export / Import -----
+
+    def export_memories(
+        self,
+        memory_type: str | None = None,
+        client_id: str | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """
+        Export all active memories as JSON.
+
+        Useful for backup before embedding provider migration or system upgrades.
+
+        Args:
+            memory_type: Filter by type (event, fact, status, decision).
+            client_id:   Filter to a specific client.
+            limit:       Max memories to export (default 1000).
+
+        Returns:
+            Dict with exported memories array.
+        """
+        params = {"limit": limit}
+        if memory_type:
+            params["type"] = memory_type
+        if client_id:
+            params["client_id"] = client_id
+
+        resp = self.session.get(f"{self.api_url}/export", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def import_memories(self, memories: list[dict]) -> dict:
+        """
+        Import memories from a previous export.
+
+        Handles deduplication (skips exact hash matches) and batch
+        processes embeddings. Safe for embedding provider migration.
+
+        Args:
+            memories: List of memory dicts (as returned by export_memories).
+
+        Returns:
+            Import result dict with counts (imported, skipped, errors).
+        """
+        resp = self.session.post(
+            f"{self.api_url}/import", json={"memories": memories}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ----- Entity relationship graph -----
+
+    def graph(self, entity: str | None = None, depth: int = 2) -> dict:
+        """
+        Get entity relationship graph data.
+
+        Args:
+            entity: Center graph on a specific entity (optional).
+            depth:  Relationship traversal depth (default 2).
+
+        Returns:
+            Graph data dict with nodes and edges.
+        """
+        params = {"format": "json", "depth": depth}
+        if entity:
+            params["entity"] = entity
+
+        resp = self.session.get(f"{self.api_url}/graph", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ----- Consolidation -----
+
+    def consolidate(self, sync: bool = False) -> dict:
+        """
+        Trigger LLM consolidation on demand.
+
+        The engine finds duplicates to merge, contradictions to flag,
+        connections between memories, cross-memory insights, and named
+        entities to extract/normalize.
+
+        Args:
+            sync: If True, blocks until consolidation completes.
+                  If False (default), returns a job ID immediately.
+
+        Returns:
+            Dict with job_id (async) or consolidation results (sync).
+        """
+        params = {}
+        if sync:
+            params["sync"] = "true"
+
+        resp = self.session.post(f"{self.api_url}/consolidate", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
     # ----- Stats -----
 
     def stats(self) -> dict:
@@ -283,5 +467,33 @@ if __name__ == "__main__":
 
     stats = brain.stats()
     pretty("Stats: Memory Health", stats)
+
+    # --- 6. Entity graph ---
+
+    entities = brain.entities(limit=10)
+    pretty("Entities: Top 10", entities)
+
+    entity = brain.entity("acme-corp")
+    pretty("Entity: acme-corp", entity)
+
+    # --- 7. Client briefing ---
+
+    client = brain.client("acme-corp")
+    pretty("Client: acme-corp briefing", client)
+
+    # --- 8. Graph data ---
+
+    graph = brain.graph(entity="acme-corp", depth=2)
+    pretty("Graph: acme-corp relationships", graph)
+
+    # --- 9. Export ---
+
+    export = brain.export_memories(client_id="acme-corp", limit=100)
+    pretty("Export: acme-corp memories", {"count": len(export.get("memories", []))})
+
+    # --- 10. Consolidation (async) ---
+
+    job = brain.consolidate(sync=False)
+    pretty("Consolidation: triggered", job)
 
     print("\nDone! All operations completed successfully.")

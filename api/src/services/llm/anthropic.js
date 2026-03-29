@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 export class AnthropicProvider {
   constructor() {
     this.model = process.env.CONSOLIDATION_MODEL || 'claude-sonnet-4-20250514';
@@ -6,7 +8,7 @@ export class AnthropicProvider {
   }
 
   async complete(prompt, options = {}) {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -16,12 +18,13 @@ export class AnthropicProvider {
       body: JSON.stringify({
         model: this.model,
         max_tokens: options.max_tokens || 4096,
+        system: 'You are a memory consolidation engine. Analyze memories and produce structured JSON output.',
         messages: [
-          { role: 'user', content: `You are a memory consolidation engine. Analyze memories and produce structured JSON output.\n\n${prompt}` },
+          { role: 'user', content: prompt },
         ],
         temperature: options.temperature || 0.3,
       }),
-    });
+    }, 120000);
 
     if (!response.ok) {
       const body = await response.text();

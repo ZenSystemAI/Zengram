@@ -53,8 +53,8 @@ graphRouter.get('/html', async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
-    console.error('[graph:index] Error:', err.message);
-    res.status(500).send(`<h1>Error</h1><p>${escapeHtml(err.message)}</p>`);
+    console.error('[graph:index]', err.message);
+    res.status(500).send('<h1>Error</h1><p>Internal server error</p>');
   }
 });
 
@@ -76,8 +76,8 @@ graphRouter.get('/full/html', async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
-    console.error('[graph:full] Error:', err.message);
-    res.status(500).send(`<h1>Error</h1><p>${escapeHtml(err.message)}</p>`);
+    console.error('[graph:full]', err.message);
+    res.status(500).send('<h1>Error</h1><p>Internal server error</p>');
   }
 });
 
@@ -112,8 +112,8 @@ graphRouter.get('/:entity/html', async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
-    console.error('[graph:html] Error:', err.message);
-    res.status(500).send(`<h1>Error</h1><p>${escapeHtml(err.message)}</p>`);
+    console.error('[graph:html]', err.message);
+    res.status(500).send('<h1>Error</h1><p>Internal server error</p>');
   }
 });
 
@@ -137,8 +137,8 @@ graphRouter.get('/:entity', async (req, res) => {
     const graphData = await buildGraphData(entity.canonical_name, depth);
     res.json(graphData);
   } catch (err) {
-    console.error('[graph] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[graph]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

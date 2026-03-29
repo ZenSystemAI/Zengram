@@ -27,8 +27,8 @@ clientRouter.get('/fingerprints', (req, res) => {
 
     res.json({ fingerprints });
   } catch (err) {
-    console.error('[client:fingerprints] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[client:fingerprints]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -90,16 +90,16 @@ clientRouter.get('/:clientId', async (req, res) => {
     // --- Briefing mode ---
     const knowledge = {};
 
-    for (const cat of KNOWLEDGE_CATEGORIES) {
+    const categoryResults = await Promise.all(KNOWLEDGE_CATEGORIES.map(cat => {
       const scrollFilter = {
         client_id: effectiveClientId,
         active: true,
         knowledge_category: cat,
       };
+      return scrollPoints(scrollFilter, SCROLL_LIMIT).then(r => ({ cat, points: r.points || [] }));
+    }));
 
-      const scrollResult = await scrollPoints(scrollFilter, SCROLL_LIMIT);
-      const points = scrollResult.points || [];
-
+    for (const { cat, points } of categoryResults) {
       // Sort by created_at descending (Qdrant scroll doesn't sort by payload)
       points.sort((a, b) => {
         const dateA = a.payload?.created_at || '';
@@ -141,7 +141,7 @@ clientRouter.get('/:clientId', async (req, res) => {
       knowledge,
     });
   } catch (err) {
-    console.error('[client:briefing] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[client:briefing]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

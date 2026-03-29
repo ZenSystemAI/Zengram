@@ -2,9 +2,15 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { scrollPoints, upsertPoint, findByPayload } from '../services/qdrant.js';
 import { embed } from '../services/embedders/interface.js';
-import { isStoreAvailable, createEvent, upsertFact, upsertStatus } from '../services/stores/interface.js';
+import {
+  isStoreAvailable, createEvent, upsertFact, upsertStatus,
+  isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
+} from '../services/stores/interface.js';
 import { scrubCredentials } from '../services/scrub.js';
 import { validateMemoryInput } from '../middleware/validate.js';
+import { extractEntities, linkExtractedEntities } from '../services/entities.js';
+import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
+import { dispatchNotification } from '../services/notifications.js';
 
 export const exportRouter = Router();
 
@@ -12,6 +18,8 @@ export const exportRouter = Router();
 exportRouter.get('/', async (req, res) => {
   try {
     const { client_id, type, since, active_only } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 1000, 1), 5000);
+    const userOffset = Math.max(parseInt(req.query.offset) || 0, 0);
 
     // Build Qdrant scroll filter
     const filter = {};
@@ -20,18 +28,27 @@ exportRouter.get('/', async (req, res) => {
     if (since) filter.created_after = since;
     if (active_only !== 'false') filter.active = true;
 
-    const allPoints = [];
-    let offset = null;
+    const memories = [];
+    let scrollOffset = null;
+    let skipped = 0;
+    let total = 0;
     const PAGE_SIZE = 100;
 
-    // Paginated scroll through all matching points
+    // Paginated scroll through matching points, respecting limit+offset
     do {
-      const result = await scrollPoints(filter, PAGE_SIZE, offset);
+      const result = await scrollPoints(filter, PAGE_SIZE, scrollOffset);
       const points = result.points || [];
 
       for (const point of points) {
+        total++;
+        if (skipped < userOffset) {
+          skipped++;
+          continue;
+        }
+        if (memories.length >= limit) continue;
+
         const p = point.payload || {};
-        allPoints.push({
+        memories.push({
           id: point.id,
           content: p.text || p.content || '',
           type: p.type,
@@ -53,18 +70,21 @@ exportRouter.get('/', async (req, res) => {
         });
       }
 
-      offset = result.next_page_offset || null;
-    } while (offset);
+      scrollOffset = result.next_page_offset || null;
+    } while (scrollOffset);
 
     res.json({
-      count: allPoints.length,
+      memories,
+      total,
+      limit,
+      offset: userOffset,
+      has_more: userOffset + memories.length < total,
       exported_at: new Date().toISOString(),
       filters: { client_id, type, since, active_only: active_only !== 'false' },
-      data: allPoints,
     });
   } catch (err) {
-    console.error('[export] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[export]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -166,6 +186,30 @@ exportRouter.post('/import', async (req, res) => {
           // Upsert to Qdrant
           await upsertPoint(pointId, vector, payload);
 
+          // Keyword index (fire-and-forget)
+          if (isKeywordSearchAvailable()) {
+            indexMemory(pointId, content, {
+              client_id: payload.client_id,
+              source_agent: payload.source_agent,
+              type: payload.type,
+            }).catch(e => console.error('[import:keyword-index]', e.message));
+          }
+
+          // Entity extraction + linking (fire-and-forget)
+          try {
+            const extractedEntities = extractEntities(content, payload.client_id, payload.source_agent);
+            if (extractedEntities.length > 0) {
+              payload.entities = extractedEntities.map(e => ({ name: e.name, type: e.type }));
+              if (isEntityStoreAvailable()) {
+                linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory, createRelationship })
+                  .catch(e => console.error('[import:entities]', e.message));
+              }
+            }
+          } catch (e) { /* non-blocking */ }
+
+          // Notification (fire-and-forget)
+          dispatchNotification('memory_stored', { id: pointId, ...payload });
+
           // Write to structured store (matching memory.js patterns)
           if (isStoreAvailable()) {
             try {
@@ -208,7 +252,7 @@ exportRouter.post('/import', async (req, res) => {
 
     res.json({ imported, skipped, errors });
   } catch (err) {
-    console.error('[import] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[import]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

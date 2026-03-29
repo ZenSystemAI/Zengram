@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 export class OllamaEmbedder {
   constructor() {
     this.model = process.env.OLLAMA_MODEL || 'nomic-embed-text';
@@ -12,14 +14,14 @@ export class OllamaEmbedder {
   }
 
   async embed(text) {
-    const response = await fetch(`${this.baseUrl}/api/embed`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: this.model,
         input: text,
       }),
-    });
+    }, 120000);
 
     if (!response.ok) {
       const body = await response.text();

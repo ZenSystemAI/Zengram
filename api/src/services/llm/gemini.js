@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 export class GeminiProvider {
   constructor() {
     this.model = process.env.CONSOLIDATION_MODEL || 'gemini-2.5-flash';
@@ -8,7 +10,7 @@ export class GeminiProvider {
   async complete(prompt, options = {}) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -24,7 +26,7 @@ export class GeminiProvider {
           responseMimeType: 'application/json',
         },
       }),
-    });
+    }, 120000);
 
     if (!response.ok) {
       const body = await response.text();

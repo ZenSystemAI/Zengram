@@ -1,3 +1,5 @@
+import fetchWithTimeout from '../fetch-with-timeout.js';
+
 // Baserow storage backend — extracted from original baserow.js
 
 const BASEROW_URL = process.env.BASEROW_URL || 'http://localhost:8082';
@@ -12,10 +14,10 @@ async function baserowRequest(path, options = {}) {
     'Authorization': `Token ${BASEROW_API_KEY}`,
   };
 
-  const res = await fetch(`${BASEROW_URL}${path}`, {
+  const res = await fetchWithTimeout(`${BASEROW_URL}${path}`, {
     ...options,
     headers: { ...headers, ...options.headers },
-  });
+  }, 15000);
 
   if (!res.ok) {
     const body = await res.text();
@@ -116,4 +118,9 @@ export class BaserowStore {
   async upsertAlias() { return { created: false }; }
   async loadAllAliases() { return []; }
   async getEntityStats() { return { total: 0, by_type: {}, top_mentioned: [] }; }
+
+  // Graph/relationship methods — no-ops for Baserow
+  async createRelationship() { return { id: null, strength: 0 }; }
+  async getRelationships() { return []; }
+  async listRelationships() { return []; }
 }

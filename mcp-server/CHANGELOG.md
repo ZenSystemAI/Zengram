@@ -46,6 +46,41 @@ Search now runs three retrieval paths in parallel and merges results using Recip
 
 Inspired by [vectorize-io/hindsight](https://github.com/vectorize-io/hindsight)'s 4-way parallel search architecture.
 
+## 2.2.0 (2026-03-24)
+
+### Noise-Free Entity Extraction
+- **Pattern-based filtering** with 50+ generic noun/adjective blocklists. Filters out CSS properties, HTML attributes, camelCase/snake_case code identifiers, shell commands, error codes, sentence fragments, French prose, and generic adjective+noun phrases.
+- **Retroactive cleanup script** (`scripts/cleanup-garbage-entities.js`) purges existing noise entities from the database.
+
+### Per-Client Knowledge Base
+- **Fingerprint-based client identification** with accent normalization and fuzzy name resolution ("AL" resolves to "acme-loans").
+- **`brain_client` MCP tool** — one call returns everything known about a client, grouped by knowledge_category (brand, strategy, meeting, content, technical, relationship, general).
+- **Auto-resolve client_id** — memories without explicit client_id are automatically tagged using fingerprint matching against the content.
+
+### Gemini Embedding 2
+- **Task-type-aware embeddings** at 3072 dimensions. Uses `RETRIEVAL_DOCUMENT` for storage, `RETRIEVAL_QUERY` for search.
+- **Matryoshka support** for flexible dimensionality (3072/1536/768).
+
+### Smarter Consolidation
+- The 6-hour LLM pass now **reclassifies knowledge categories** and **infers entity relationship types** (contact_of, same_owner, uses, works_on, competitor_of).
+- Supports OpenAI, Anthropic, Gemini, and Ollama as consolidation LLM providers.
+
+## 2.1.0 (2026-03-22)
+
+### Entity Relationship Graph
+- **Co-occurrence tracking** via `entity_relationships` table. Relationships are automatically detected during consolidation.
+- **Interactive D3.js visualization** — dark theme, force-directed layout, search, zoom, and PNG export.
+- **`brain_graph` MCP tool** and `GET /graph` API endpoint for entity relationship queries.
+
+### Webhook Notifications
+- **Real-time dispatch** on memory store, supersede, and delete events via configurable webhook URLs.
+- Fire-and-forget to any HTTP endpoint. Configure via `WEBHOOK_URLS` and `WEBHOOK_EVENTS` env vars.
+
+### Import/Export
+- **`brain_export` and `brain_import` MCP tools** for full backup and migration support.
+- Export all memories as JSON, import with automatic deduplication and batch embedding.
+- Safe for embedding provider migration — re-embeds all content with the current provider.
+
 ## 2.0.0 (2026-03-20)
 
 ### Features

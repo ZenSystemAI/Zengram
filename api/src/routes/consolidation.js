@@ -18,8 +18,8 @@ consolidationRouter.post('/', async (req, res) => {
     }
     res.status(202).json(job);
   } catch (err) {
-    console.error('[consolidation] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[consolidation]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -37,7 +37,7 @@ consolidationRouter.get('/status', async (req, res) => {
   try {
     res.json(getConsolidationStatus());
   } catch (err) {
-    console.error('[consolidation:status] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[consolidation:status]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -30,20 +30,12 @@
 
 Born from a production setup where [OpenClaw](https://github.com/openclaw/openclaw) agents, Claude Code, and n8n workflows needed to share memory across separate machines. Nothing existed that did this well, so we built it.
 
-### What's New in v2.3
+### Latest: v2.3
 
-- **Multi-Path Retrieval with RRF Fusion** — Search now runs three retrieval paths in parallel: vector (semantic similarity), keyword (BM25 full-text via Postgres tsvector or SQLite FTS5), and graph (BFS spreading activation through entity relationships). Results are merged using Reciprocal Rank Fusion (RRF). Exact names and technical terms now surface reliably even when embeddings miss them. Entity relationships that were previously stored but unused are now a first-class retrieval signal. Feature-flagged via `MULTI_PATH_SEARCH=true` (default on). Use `format=full` in `brain_search` to see which paths contributed to each result. Includes a backfill script (`scripts/backfill-keyword-index.js`) for existing memories.
+- **Multi-Path Retrieval with RRF Fusion** — Search now runs three retrieval paths in parallel: vector similarity, BM25 keyword search (Postgres tsvector / SQLite FTS5), and graph BFS through entity relationships. Results are merged using Reciprocal Rank Fusion. Exact names and technical terms now surface reliably even when embeddings miss them. Feature-flagged via `MULTI_PATH_SEARCH=true` (default on). Use `format=full` in `brain_search` to see which paths contributed to each result.
+- **114 tests passing** across RRF, entity extraction, validation, scrubbing, notifications, and client resolver.
 
-### What Was New in v2.2
-
-- **Noise-Free Entity Extraction** — v2.2 filters out CSS properties, code identifiers, shell commands, sentence fragments, French prose, and generic phrases. Pattern-based filtering with 50+ generic noun/adjective blocklists. Includes a retroactive cleanup script (`scripts/cleanup-garbage-entities.js`) to purge existing noise.
-- **Per-Client Knowledge Base** — Fingerprint-based client identification with accent normalization. One tool call (`brain_client`) returns everything known about a client: brand, strategy, meetings, content, technical details, relationships. Fuzzy name resolution ("AL" resolves to "acme-loans").
-- **Gemini Embedding 2** — Task-type-aware embeddings at 3072 dimensions. Uses `RETRIEVAL_DOCUMENT` for storage, `RETRIEVAL_QUERY` for search. Matryoshka support for flexible dimensionality (3072/1536/768).
-- **Import/Export** — Full backup and migration support. Export all memories as JSON, import with automatic deduplication. Never lose data when switching embedding providers again.
-- **Webhook Notifications** — Real-time dispatch when memories are stored, superseded, or deleted. Fire-and-forget to any HTTP endpoint.
-- **Entity Relationship Graph** — Track how entities connect through co-occurrence. Interactive D3.js visualization with dark theme, force-directed layout, search, and PNG export.
-- **Auto-Resolve Client Context** — Memories without explicit client_id are automatically tagged using fingerprint matching against the content.
-- **Smarter Consolidation** — The 6-hour LLM pass reclassifies knowledge categories and infers entity relationship types (contact_of, same_owner, uses, works_on, competitor_of). Supports OpenAI, Anthropic, Gemini, and Ollama as consolidation LLM providers.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history including v2.2 (noise-free entity extraction, per-client knowledge base, Gemini Embedding 2) and earlier versions.
 
 <p align="center">
   <img src=".github/shared memory.jpg" alt="Shared Memory Architecture" width="340" />
@@ -525,6 +517,14 @@ GEMINI_EMBEDDING_DIMS=3072
 docker exec shared-brain-api node scripts/reindex-embeddings.js
 ```
 
+## Examples
+
+Working examples are in the [`examples/`](examples/) directory:
+
+- **[`python-client.py`](examples/python-client.py)** — Minimal Python client class wrapping the full API. No dependencies beyond `requests`. Includes a runnable demo that stores memories, searches, queries, and retrieves stats.
+- **[`curl-demo.sh`](examples/curl-demo.sh)** — Full API walkthrough using `curl` and `jq`. Demonstrates every endpoint with commented explanations.
+- **[`multi-agent-scenario.sh`](examples/multi-agent-scenario.sh)** — Multi-agent collaboration scenario showing how different agents share context through the memory system.
+
 ## Adapters
 
 ### MCP Server (Claude Code, Cursor, Windsurf)
@@ -557,7 +557,7 @@ npm install -g @zensystemai/multi-agent-memory-mcp
 For [OpenClaw](https://github.com/openclaw/openclaw) agents, drop the bash adapter into your skills directory:
 
 ```bash
-cp -r adapters/bash ~/.openclaw/skills/shared-brain
+cp -r adapters/openclaw ~/.openclaw/skills/shared-brain
 ```
 
 Edit `brain.sh` to set your API URL and agent name, or configure via environment variables. OpenClaw discovers the skill via `SKILL.md` and your agent can call `brain.sh` commands directly.
@@ -624,11 +624,39 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BRAIN_API_KEY` | — | API key for authentication |
+| `BRAIN_API_KEY` | — | Admin API key for authentication (full access) |
 | `QDRANT_URL` | — | Qdrant instance URL |
 | `QDRANT_API_KEY` | — | Qdrant API key |
+| `QDRANT_TIMEOUT_MS` | `10000` | Timeout for Qdrant operations in milliseconds |
 | `PORT` | `8084` | API server port |
-| `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN/Docker access. |
+| `API_BIND` | `127.0.0.1` | IP address to bind the API server. Set to `0.0.0.0` for LAN/Docker access. |
+
+### Per-Agent API Keys
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_KEY_<name>` | — | Per-agent API key. `<name>` maps to agent identity (underscores become hyphens). |
+
+Agents authenticated with a per-agent key get scoped permissions: they can only delete their own memories, and `source_agent` in stored memories is bound to their authenticated identity. The admin `BRAIN_API_KEY` retains full access with no identity binding.
+
+Generate keys with `openssl rand -hex 32`. See `.env.example` for format.
+
+```bash
+# Example: three agents with their own keys
+AGENT_KEY_claude_code=a1b2c3d4...
+AGENT_KEY_n8n=e5f6a7b8...
+AGENT_KEY_morpheus=c9d0e1f2...
+# claude_code authenticates as "claude-code", n8n as "n8n", etc.
+```
+
+### Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_WRITES` | `60` | Max write requests per minute per key |
+| `RATE_LIMIT_READS` | `120` | Max read requests per minute per key |
+
+Rate limits use a per-key sliding window. Each API key (admin or per-agent) has its own independent counter. When a limit is exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header.
 
 ### Embedding Provider
 
@@ -739,7 +767,10 @@ multi-agent-memory/
 ├── api/                        # Memory API server
 │   ├── src/
 │   │   ├── index.js            # Entry point, startup, alias cache init
-│   │   ├── middleware/auth.js   # API key authentication
+│   │   ├── middleware/
+│   │   │   ├── auth.js         # API key authentication (admin + per-agent)
+│   │   │   ├── ratelimit.js    # Per-key sliding window rate limiting
+│   │   │   └── validate.js     # Request validation (type, content, fields)
 │   │   ├── routes/
 │   │   │   ├── memory.js       # Store, search, query endpoints
 │   │   │   ├── briefing.js     # Session briefing with entity summary
@@ -759,6 +790,10 @@ multi-agent-memory/
 │   │       ├── consolidation.js# LLM consolidation + entity refinement
 │   │       ├── client-resolver.js # Fingerprint-based client identification
 │   │       ├── notifications.js# Webhook notification dispatch
+│   │       ├── rrf.js          # Reciprocal Rank Fusion algorithm
+│   │       ├── keyword-search.js # BM25/FTS keyword search service
+│   │       ├── graph-search.js # BFS spreading activation graph retrieval
+│   │       ├── fetch-with-timeout.js # HTTP fetch with configurable timeout
 │   │       ├── embedders/      # Pluggable embedding providers
 │   │       │   ├── interface.js
 │   │       │   ├── openai.js
@@ -776,34 +811,54 @@ multi-agent-memory/
 │   │           ├── postgres.js
 │   │           └── baserow.js
 │   ├── scripts/
-│   │   ├── backfill-entities.js    # One-time entity extraction for existing memories
-│   │   ├── reindex-embeddings.js   # Re-embed all memories (for provider/dimension changes)
-│   │   └── cleanup-duplicates.js
+│   │   ├── backfill-entities.js       # One-time entity extraction for existing memories
+│   │   ├── backfill-keyword-index.js  # One-time keyword index for existing memories
+│   │   ├── cleanup-duplicates.js      # Remove duplicate memories
+│   │   ├── cleanup-garbage-entities.js# Purge noise entities from extraction
+│   │   ├── rebuild-from-postgres.js   # Rebuild Qdrant from Postgres data
+│   │   └── reindex-embeddings.js      # Re-embed all memories (provider/dimension changes)
+│   ├── tests/
+│   │   ├── client-resolver.test.js    # Client resolver tests
+│   │   ├── entities.test.js           # Entity extraction + linking tests
+│   │   ├── notifications.test.js      # Webhook notification tests
+│   │   ├── rrf.test.js                # RRF fusion algorithm tests
+│   │   ├── scrub.test.js              # Credential scrubbing tests
+│   │   └── validate.test.js           # Request validation tests
 │   ├── Dockerfile
 │   └── package.json
 ├── mcp-server/                 # MCP server for Claude/Cursor
 │   ├── src/index.js            # 12 tools: store, search, briefing, query, stats, consolidate, entities, delete, client, export, import, graph
-│   └── package.json
+│   ├── package.json
+│   └── CHANGELOG.md
 ├── adapters/
 │   ├── bash/                   # CLI adapter (curl + jq)
 │   │   ├── brain.sh
 │   │   └── SKILL.md
-│   └── n8n/                    # n8n workflow template
-│       └── shared-brain-logger.json
+│   ├── n8n/                    # n8n workflow template
+│   │   └── shared-brain-logger.json
+│   └── openclaw/               # OpenClaw agent skill adapter
+│       ├── memory-consolidate.sh
+│       └── memory-query.sh
+├── examples/
+│   ├── curl-demo.sh            # Full API walkthrough with curl + jq
+│   ├── python-client.py        # Minimal Python client class + demo
+│   └── multi-agent-scenario.sh # Multi-agent collaboration scenario
 ├── docker-compose.yml
 ├── .env.example
+├── CHANGELOG.md
 └── README.md
 ```
 
 ## Roadmap
 
 **Shipped:**
-- ~~Entity relationships + graph~~ — v2.0
-- ~~Import/Export~~ — v2.0
-- ~~Webhook notifications~~ — v2.0
-- ~~Client knowledge base~~ — v2.0
-- ~~Noise-free entity extraction~~ — v2.2
-- ~~Garbage entity cleanup tooling~~ — v2.2
+- ~~Entity relationships + graph~~ -- v2.0
+- ~~Import/Export~~ -- v2.0
+- ~~Webhook notifications~~ -- v2.0
+- ~~Client knowledge base~~ -- v2.0
+- ~~Noise-free entity extraction~~ -- v2.2
+- ~~Garbage entity cleanup tooling~~ -- v2.2
+- ~~Multi-path retrieval with RRF fusion~~ -- v2.3
 
 **Coming next:**
 - **Web dashboard** — Browse, search, and manage memories visually

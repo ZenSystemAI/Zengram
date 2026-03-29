@@ -8,6 +8,7 @@ export class PostgresStore {
 
   async init() {
     this.pool = new pg.Pool({ connectionString: this.url });
+    this.pool.on('error', (err) => console.error('[postgres] Idle client error:', err.message));
 
     // Create tables
     await this.pool.query(`
@@ -375,6 +376,10 @@ export class PostgresStore {
       relationship_type: r.relationship_type,
       strength: r.strength,
     }));
+  }
+
+  async close() {
+    if (this.pool) await this.pool.end();
   }
 
   async listRelationships(filters = {}) {

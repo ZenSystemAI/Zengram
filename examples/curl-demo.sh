@@ -171,5 +171,77 @@ section "Stats: Memory Health"
 curl -s "${API_URL}/stats" \
   -H "${header_auth}" | jq .
 
+# ---------------------------------------------------------------------------
+# 10. Entity listing — browse the knowledge graph
+# ---------------------------------------------------------------------------
+section "Entities: List (filtered by type)"
+
+# List all technology entities. Also supports: client, person, domain,
+# workflow, agent, system, service.
+curl -s "${API_URL}/entities?type=technology&limit=10" \
+  -H "${header_auth}" | jq .
+
+# ---------------------------------------------------------------------------
+# 11. Entity detail — single entity by name or alias
+# ---------------------------------------------------------------------------
+section "Entity: Detail (by name)"
+
+# Get a single entity including its alias list and metadata.
+# Alias resolution means "acme", "Acme Corp", "acme-corp" all work.
+curl -s "${API_URL}/entities/acme-corp" \
+  -H "${header_auth}" | jq .
+
+# ---------------------------------------------------------------------------
+# 12. Client briefing — everything known about a client
+# ---------------------------------------------------------------------------
+section "Client: Briefing"
+
+# Returns all memories for a client grouped by knowledge_category:
+# brand, strategy, meeting, content, technical, relationship, general.
+# Supports fuzzy name resolution.
+curl -s "${API_URL}/client/acme-corp" \
+  -H "${header_auth}" | jq .
+
+# ---------------------------------------------------------------------------
+# 13. Entity relationship graph — graph data as JSON
+# ---------------------------------------------------------------------------
+section "Graph: Entity Relationships (JSON)"
+
+# Get entity relationships as a node/edge graph centered on an entity.
+# Use format=html (or visit /graph in a browser) for interactive D3.js viz.
+curl -s "${API_URL}/graph?format=json&entity=acme-corp&depth=2" \
+  -H "${header_auth}" | jq .
+
+# ---------------------------------------------------------------------------
+# 14. Export — backup all memories as JSON
+# ---------------------------------------------------------------------------
+section "Export: Backup memories"
+
+# Exports all active memories. Useful before embedding provider migration.
+# Supports ?client_id= and ?type= filters.
+curl -s "${API_URL}/export?client_id=acme-corp" \
+  -H "${header_auth}" | jq '.memories | length'
+
+echo "  (showing memory count only — pipe to a file for full backup)"
+
+# ---------------------------------------------------------------------------
+# 15. Import — restore from a previous export
+# ---------------------------------------------------------------------------
+section "Import: Restore memories"
+
+# Imports memories from a previous export. Handles deduplication.
+# In practice you would pipe a backup file: -d @backup.json
+echo '  (skipping import demo — use: curl -X POST "${API_URL}/import" -d @backup.json)'
+
+# ---------------------------------------------------------------------------
+# 16. Delete — soft-delete a memory
+# ---------------------------------------------------------------------------
+section "Delete: Soft-delete a memory"
+
+# Soft-deletes a memory (marks inactive). Agent-scoped keys can only
+# delete their own memories. The reason field is optional but logged.
+# Using a placeholder ID here — replace with a real ID from a store response.
+echo '  (skipping delete demo — use: curl -X DELETE "${API_URL}/memory/YOUR-ID" -H "X-Api-Key: ..." -d '"'"'{"reason": "outdated"}'"'"')'
+
 echo ""
 echo "Done! All API endpoints demonstrated."
