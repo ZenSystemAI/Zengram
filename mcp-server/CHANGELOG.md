@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.1 (2026-03-29)
+
+### Bug Fixes
+- **brain_consolidate**: Fixed hardcoded `?sync=true` — async mode now works as documented. Added `sync` boolean parameter for explicit control.
+- **MCP input validation**: `brain_store`, `brain_search`, `brain_delete`, and `brain_client` now validate required arguments before calling the API, returning clear error messages instead of passing `undefined`.
+- **brain_export**: Added `limit` parameter (default 500) to prevent oversized responses. Description warns about large result sets.
+- **Server version**: Self-reported version now matches package.json.
+
+### Reliability
+- All API routes sanitize error messages (no internal details leaked to clients)
+- Fetch timeouts on all HTTP calls (embedders, LLM providers, Baserow, webhooks)
+- Export endpoint paginated, import endpoint now indexes keywords + extracts entities
+- Webhook dedup tenant-scoped, Postgres graceful shutdown, auth map cleanup
+
 ## 2.3.0 (2026-03-26)
 
 ### Multi-Path Retrieval with RRF Fusion
