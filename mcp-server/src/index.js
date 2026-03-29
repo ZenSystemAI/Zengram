@@ -371,6 +371,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'brain_reclassify',
+      description: 'Reclassify entity types in the knowledge graph. Use action="suggest" to auto-detect misclassified entities, or action="apply" with dry_run=true (default) to preview changes before applying.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['suggest', 'apply'],
+            description: 'suggest=get auto-detected misclassifications, apply=reclassify entities',
+          },
+          reclassifications: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                new_type: {
+                  type: 'string',
+                  enum: ['client', 'person', 'system', 'service', 'domain', 'technology', 'workflow', 'agent'],
+                },
+              },
+              required: ['name', 'new_type'],
+            },
+            description: 'For action=apply: list of entities to reclassify',
+          },
+          dry_run: {
+            type: 'boolean',
+            description: 'For action=apply: preview changes without applying (default: true)',
+          },
+        },
+        required: ['action'],
+      },
+    },
+    {
       name: 'brain_reflect',
       description: 'Reflect on a topic by synthesizing patterns across stored memories. Searches relevant memories using multi-path retrieval, then uses LLM to analyze and produce insights about patterns, timeline evolution, contradictions, and knowledge gaps. Use this for "what do we know about X?", "what patterns do you see?", or "what\'s missing?"',
       inputSchema: {
@@ -575,6 +609,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           method: 'POST',
           body: JSON.stringify({ data: args.data }),
         });
+        break;
+      }
+
+      case 'brain_reclassify': {
+        const action = args.action || 'suggest';
+        if (action === 'suggest') {
+          result = await apiRequest('/entities/reclassify/suggestions');
+        } else if (action === 'apply') {
+          if (!args.reclassifications || !Array.isArray(args.reclassifications) || args.reclassifications.length === 0) {
+            return { content: [{ type: 'text', text: 'Error: "reclassifications" array is required for action=apply' }], isError: true };
+          }
+          result = await apiRequest('/entities/reclassify', {
+            method: 'POST',
+            body: JSON.stringify({
+              reclassifications: args.reclassifications,
+              dry_run: args.dry_run !== false, // default true
+            }),
+          });
+        } else {
+          return { content: [{ type: 'text', text: `Error: unknown action "${action}". Use "suggest" or "apply".` }], isError: true };
+        }
         break;
       }
 

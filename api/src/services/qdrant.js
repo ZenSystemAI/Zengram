@@ -1,8 +1,12 @@
 import { getEmbeddingDimensions } from './embedders/interface.js';
+import { resolveCollection, getDefaultCollection } from './collection-registry.js';
 
 const QDRANT_URL = process.env.QDRANT_URL || 'http://qdrant:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
-const COLLECTION = 'shared_memories';
+const COLLECTION = 'shared_memories'; // default — kept for backward compat
+
+// Helper: resolve collection name from optional parameter
+function col(collection) { return collection ? resolveCollection(collection) : COLLECTION; }
 
 // Memory decay config
 const DECAY_FACTOR = parseFloat(process.env.DECAY_FACTOR) || 0.98;
@@ -125,8 +129,8 @@ export async function ensureEntityIndex() {
   console.log('[qdrant] Payload indexes verified');
 }
 
-export async function upsertPoint(id, vector, payload) {
-  return qdrantRequest(`/collections/${COLLECTION}/points`, {
+export async function upsertPoint(id, vector, payload, collection) {
+  return qdrantRequest(`/collections/${col(collection)}/points`, {
     method: 'PUT',
     body: JSON.stringify({
       points: [{ id, vector, payload }],
@@ -134,7 +138,7 @@ export async function upsertPoint(id, vector, payload) {
   });
 }
 
-export async function searchPoints(vector, filter = {}, limit = 10, nestedFilters = [], rangeFilters = []) {
+export async function searchPoints(vector, filter = {}, limit = 10, nestedFilters = [], rangeFilters = [], collection) {
   const body = {
     vector,
     limit,
@@ -170,14 +174,14 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
     body.filter = { must };
   }
 
-  const result = await qdrantRequest(`/collections/${COLLECTION}/points/search`, {
+  const result = await qdrantRequest(`/collections/${col(collection)}/points/search`, {
     method: 'POST',
     body: JSON.stringify(body),
   });
   return result.result || [];
 }
 
-export async function scrollPoints(filter = {}, limit = 50, offset = null) {
+export async function scrollPoints(filter = {}, limit = 50, offset = null, collection) {
   const body = { limit, with_payload: true };
 
   if (offset) body.offset = offset;
@@ -194,28 +198,28 @@ export async function scrollPoints(filter = {}, limit = 50, offset = null) {
     if (body.filter.must.length === 0) delete body.filter;
   }
 
-  const result = await qdrantRequest(`/collections/${COLLECTION}/points/scroll`, {
+  const result = await qdrantRequest(`/collections/${col(collection)}/points/scroll`, {
     method: 'POST',
     body: JSON.stringify(body),
   });
   return result.result || {};
 }
 
-export async function getCollectionInfo() {
-  const result = await qdrantRequest(`/collections/${COLLECTION}`);
+export async function getCollectionInfo(collection) {
+  const result = await qdrantRequest(`/collections/${col(collection)}`);
   return result.result;
 }
 
 // Fetch a single point by ID
-export async function getPoint(pointId) {
-  const result = await qdrantRequest(`/collections/${COLLECTION}/points/${pointId}`);
+export async function getPoint(pointId, collection) {
+  const result = await qdrantRequest(`/collections/${col(collection)}/points/${pointId}`);
   return result.result || null;
 }
 
 // Batch retrieve points by IDs (for RRF fusion — fetch payloads for keyword/graph hits)
-export async function getPoints(pointIds) {
+export async function getPoints(pointIds, collection) {
   if (!pointIds || pointIds.length === 0) return [];
-  const result = await qdrantRequest(`/collections/${COLLECTION}/points`, {
+  const result = await qdrantRequest(`/collections/${col(collection)}/points`, {
     method: 'POST',
     body: JSON.stringify({ ids: pointIds, with_payload: true, with_vector: false }),
   });
@@ -223,16 +227,16 @@ export async function getPoints(pointIds) {
 }
 
 // Update payload fields on existing points (partial update)
-export async function updatePointPayload(pointIds, payload) {
+export async function updatePointPayload(pointIds, payload, collection) {
   const ids = Array.isArray(pointIds) ? pointIds : [pointIds];
-  return qdrantRequest(`/collections/${COLLECTION}/points/payload`, {
+  return qdrantRequest(`/collections/${col(collection)}/points/payload`, {
     method: 'POST',
     body: JSON.stringify({ payload, points: ids }),
   });
 }
 
 // Find points by exact payload field match
-export async function findByPayload(field, value, extraFilter = {}, limit = 10) {
+export async function findByPayload(field, value, extraFilter = {}, limit = 10, collection) {
   const must = [{ key: field, match: { value } }];
   for (const [key, val] of Object.entries(extraFilter)) {
     if (val !== undefined && val !== null) {
@@ -244,7 +248,7 @@ export async function findByPayload(field, value, extraFilter = {}, limit = 10) 
     }
   }
 
-  const result = await qdrantRequest(`/collections/${COLLECTION}/points/scroll`, {
+  const result = await qdrantRequest(`/collections/${col(collection)}/points/scroll`, {
     method: 'POST',
     body: JSON.stringify({
       filter: { must },
@@ -268,20 +272,21 @@ export function computeEffectiveConfidence(payload) {
 }
 
 // Get memory stats across the collection
-export async function getMemoryStats() {
-  const info = await getCollectionInfo();
+export async function getMemoryStats(collection) {
+  const c = col(collection);
+  const info = await getCollectionInfo(collection);
 
   // Run all count queries in parallel
   const types = ['event', 'fact', 'decision', 'status'];
   const [activeResult, consolidatedResult, ...typeResults] = await Promise.all([
-    qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+    qdrantRequest(`/collections/${c}/points/count`, {
       method: 'POST',
       body: JSON.stringify({
         filter: { must: [{ key: 'active', match: { value: true } }] },
         exact: true,
       }),
     }),
-    qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+    qdrantRequest(`/collections/${c}/points/count`, {
       method: 'POST',
       body: JSON.stringify({
         filter: { must: [{ key: 'consolidated', match: { value: true } }] },
@@ -289,7 +294,7 @@ export async function getMemoryStats() {
       }),
     }),
     ...types.map(type =>
-      qdrantRequest(`/collections/${COLLECTION}/points/count`, {
+      qdrantRequest(`/collections/${c}/points/count`, {
         method: 'POST',
         body: JSON.stringify({
           filter: { must: [{ key: 'type', match: { value: type } }] },
@@ -314,4 +319,124 @@ export async function getMemoryStats() {
   };
 }
 
-export { DECAY_TYPES };
+/**
+ * Batch update entity type in all Qdrant points where entities[].name matches.
+ * Scrolls through all matching points and updates the entities array in chunks of 100.
+ * @param {string} entityName - Entity name to find in payloads
+ * @param {string} oldType - Current type to match
+ * @param {string} newType - New type to assign
+ * @returns {Promise<{ total_updated: number, total_scanned: number }>}
+ */
+export async function batchUpdateEntityType(entityName, oldType, newType) {
+  let totalUpdated = 0;
+  let totalScanned = 0;
+  let nextOffset = null;
+  const CHUNK_SIZE = 100;
+
+  // Scroll through all points that have this entity name in their entities array
+  do {
+    const body = {
+      limit: CHUNK_SIZE,
+      with_payload: true,
+      filter: {
+        must: [
+          {
+            nested: {
+              key: 'entities',
+              filter: {
+                must: [{ key: 'name', match: { value: entityName } }],
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    if (nextOffset) body.offset = nextOffset;
+
+    const result = await qdrantRequest(`/collections/${COLLECTION}/points/scroll`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    const scrollResult = result.result || {};
+    const points = scrollResult.points || [];
+    nextOffset = scrollResult.next_page_offset || null;
+
+    totalScanned += points.length;
+
+    // For each point, update the entities array if needed
+    for (const point of points) {
+      const entities = point.payload?.entities;
+      if (!Array.isArray(entities)) continue;
+
+      let changed = false;
+      const updatedEntities = entities.map(e => {
+        if (e.name === entityName && e.type === oldType) {
+          changed = true;
+          return { ...e, type: newType };
+        }
+        return e;
+      });
+
+      if (changed) {
+        await updatePointPayload([point.id], { entities: updatedEntities });
+        totalUpdated++;
+      }
+    }
+  } while (nextOffset);
+
+  return { total_updated: totalUpdated, total_scanned: totalScanned };
+}
+
+// --- Collection Management ---
+
+/**
+ * Create a new Qdrant collection with standard config and indexes.
+ */
+export async function createQdrantCollection(collectionName) {
+  const embeddingDims = getEmbeddingDimensions();
+  await qdrantRequest('/collections/' + collectionName, {
+    method: 'PUT',
+    body: JSON.stringify({
+      vectors: { size: embeddingDims, distance: 'Cosine' },
+      optimizers_config: { indexing_threshold: 100 },
+    }),
+  });
+
+  // Create standard indexes
+  const keywordFields = ['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject', 'knowledge_category'];
+  for (const field of keywordFields) {
+    await qdrantRequest(`/collections/${collectionName}/index`, {
+      method: 'PUT', body: JSON.stringify({ field_name: field, field_schema: 'Keyword' }),
+    });
+  }
+  await qdrantRequest(`/collections/${collectionName}/index`, { method: 'PUT', body: JSON.stringify({ field_name: 'active', field_schema: 'Bool' }) });
+  await qdrantRequest(`/collections/${collectionName}/index`, { method: 'PUT', body: JSON.stringify({ field_name: 'confidence', field_schema: 'Float' }) });
+  await qdrantRequest(`/collections/${collectionName}/index`, { method: 'PUT', body: JSON.stringify({ field_name: 'access_count', field_schema: 'Integer' }) });
+  for (const field of ['created_at', 'last_accessed_at']) {
+    await qdrantRequest(`/collections/${collectionName}/index`, {
+      method: 'PUT', body: JSON.stringify({ field_name: field, field_schema: { type: 'datetime', is_tenant: false } }),
+    });
+  }
+  await qdrantRequest(`/collections/${collectionName}/index`, { method: 'PUT', body: JSON.stringify({ field_name: 'entities[].name', field_schema: 'keyword' }) });
+
+  return { name: collectionName, dimensions: embeddingDims };
+}
+
+/**
+ * Delete a Qdrant collection.
+ */
+export async function deleteQdrantCollection(collectionName) {
+  return qdrantRequest(`/collections/${collectionName}`, { method: 'DELETE' });
+}
+
+/**
+ * List all Qdrant collections.
+ */
+export async function listQdrantCollections() {
+  const result = await qdrantRequest('/collections');
+  return (result.result || {}).collections || [];
+}
+
+export { DECAY_TYPES, qdrantRequest };

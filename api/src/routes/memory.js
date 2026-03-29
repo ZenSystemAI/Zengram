@@ -16,6 +16,9 @@ import { dispatchNotification } from '../services/notifications.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
 import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
+import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
+import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
+import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 import { getClientResolver } from '../services/client-resolver.js';
@@ -193,8 +196,27 @@ memoryRouter.post('/', async (req, res) => {
       console.error('[memory:entities] Extraction failed (non-blocking):', e.message);
     }
 
-    // Embed and store in Qdrant
+    // Embed
     const vector = await embed(cleanContent, 'store');
+
+    // Relevance scoring (uses the already-computed vector — no extra embed call)
+    let relevanceResult = null;
+    try {
+      relevanceResult = await scoreRelevance({
+        content: cleanContent,
+        type,
+        importance: importance || 'medium',
+        source_agent,
+        entities: extractedEntities,
+        vector,
+        client_id: client_id || 'global',
+      });
+      Object.assign(payload, relevancePayloadFields(relevanceResult));
+    } catch (e) {
+      console.error('[memory:relevance] Scoring failed (non-blocking):', e.message);
+    }
+
+    // Store in Qdrant
     await upsertPoint(pointId, vector, payload);
 
     // Index in keyword search (fire-and-forget)
@@ -263,6 +285,7 @@ memoryRouter.post('/', async (req, res) => {
         qdrant: true,
         structured_db: !!storeResult,
       },
+      ...(relevanceResult ? { relevance: { score: relevanceResult.score, classification: relevanceResult.classification, signals: relevanceResult.signals } } : {}),
       ...(keyWarning ? { warning: keyWarning } : {}),
     });
   } catch (err) {
@@ -275,7 +298,7 @@ memoryRouter.post('/', async (req, res) => {
 // Paths: vector (semantic), keyword (BM25), graph (entity BFS)
 memoryRouter.get('/search', async (req, res) => {
   try {
-    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, knowledge_category: kc } = req.query;
+    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc } = req.query;
     const isCompact = format === 'compact';
     const isFull = format === 'full';
     const maxResults = Math.min(parseInt(limit) || 10, 100);
@@ -283,6 +306,16 @@ memoryRouter.get('/search', async (req, res) => {
     if (!q) {
       return res.status(400).json({ error: 'Missing required query parameter: q' });
     }
+
+    // --- Fix 7: Query expansion / domain inference ---
+    const queryAnalysis = analyzeQuery(q);
+    let searchQuery = q;
+    if (queryAnalysis.isVague && queryAnalysis.expansions) {
+      searchQuery = expandQuery(q, queryAnalysis.expansions);
+    }
+
+    // --- Fix 6: Temporal date-range filtering ---
+    const temporalResult = resolveTemporalQuery(q, reference_date || at_time);
 
     const filter = {};
     if (type) filter.type = type;
@@ -306,19 +339,27 @@ memoryRouter.get('/search', async (req, res) => {
     }
 
     // Temporal validity filter — "what was true at time X?"
-    // Adds range conditions: valid_from <= at_time AND (valid_to is null OR valid_to > at_time)
     const rangeFilters = [];
     if (at_time) {
       rangeFilters.push({ key: 'valid_from', range: { lte: at_time } });
-      // valid_to > at_time OR valid_to is null (still valid) — handled by Qdrant should condition
+    }
+
+    // Fix 6: Add date-range filter from temporal resolution or explicit params
+    const effectiveDateFrom = date_from || temporalResult.dateFrom;
+    const effectiveDateTo = date_to || temporalResult.dateTo;
+    if (effectiveDateFrom) {
+      rangeFilters.push({ key: 'created_at', range: { gte: effectiveDateFrom } });
+    }
+    if (effectiveDateTo) {
+      rangeFilters.push({ key: 'created_at', range: { lte: effectiveDateTo } });
     }
 
     // --- Multi-path retrieval ---
     const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is Qdrant-only
     const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
 
-    // Always run vector search
-    const vectorPromise = embed(q, 'search').then(vector =>
+    // Always run vector search (use expanded query for better coverage)
+    const vectorPromise = embed(searchQuery, 'search').then(vector =>
       searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters)
     );
 
@@ -393,13 +434,18 @@ memoryRouter.get('/search', async (req, res) => {
       finalResults = vectorResults.slice(0, maxResults);
     }
 
-    // Apply confidence decay + access-weighted ranking
+    // Apply confidence decay + access-weighted ranking + temporal boost
     const COMPACT_MAX = 200;
+    const refDateForBoost = reference_date || at_time || null;
     const results = finalResults.map(r => {
       const effectiveConfidence = computeEffectiveConfidence(r.payload);
       const p = r.payload;
       const accessBoost = 1 + (0.3 * Math.log2((p.access_count || 0) + 1));
-      const effectiveScore = +(((r.score || 0.5) * effectiveConfidence * accessBoost)).toFixed(4);
+      // Fix 6: Temporal proximity boost — memories closer to reference date score higher
+      const tempBoost = (temporalResult.isTemporalQuery && refDateForBoost)
+        ? temporalProximityBoost(p.created_at, refDateForBoost)
+        : 1.0;
+      const effectiveScore = +(((r.score || 0.5) * effectiveConfidence * accessBoost * tempBoost)).toFixed(4);
 
       if (isCompact) {
         const text = p.text || '';
@@ -435,6 +481,42 @@ memoryRouter.get('/search', async (req, res) => {
     // Re-sort by effective_score
     results.sort((a, b) => b.effective_score - a.effective_score);
 
+    // --- Fix 5: Session deduplication in re-ranking ---
+    // Ensure results span unique sessions rather than clustering around the most similar one.
+    // Parse session_id from metadata or content header.
+    if (results.length > 3) {
+      const diversified = [];
+      const sessionSeen = new Map(); // session_id → count
+      const noSession = [];
+
+      for (const r of results) {
+        // Try metadata.session_id, then parse from content header "[Session: xxx |"
+        let sessionId = r.metadata?.session_id;
+        if (!sessionId) {
+          const text = r.text || r.content || '';
+          const match = text.match(/\[Session:\s*(\S+)/);
+          if (match) sessionId = match[1];
+        }
+        if (!sessionId) { noSession.push(r); continue; }
+
+        const count = sessionSeen.get(sessionId) || 0;
+        sessionSeen.set(sessionId, count + 1);
+        // Tag with session info for round-robin
+        r._sessionId = sessionId;
+        r._sessionRank = count;
+        diversified.push(r);
+      }
+
+      // Round-robin: sort by session rank (0 first from all sessions, then 1, etc.), preserving score within rank
+      diversified.sort((a, b) => a._sessionRank - b._sessionRank || b.effective_score - a.effective_score);
+
+      // Merge back: diversified first, then non-session results
+      results.length = 0;
+      results.push(...diversified, ...noSession);
+      // Trim to maxResults
+      results.splice(maxResults);
+    }
+
     // Async: increment access_count and update last_accessed_at for returned results (fire-and-forget).
     // We fetch current point payloads in a single batch call before writing to reduce the race
     // window where two concurrent searches both read the same stale access_count from search
@@ -465,6 +547,34 @@ memoryRouter.get('/search', async (req, res) => {
         });
     }
 
+    // --- Fix 7 part 2: Retry with broader terms on zero results ---
+    if (results.length === 0 && searchQuery === q) {
+      // Try extracted key terms
+      const broader = extractSearchTerms(q);
+      if (broader && broader.length > 3) {
+        try {
+          const retryVector = await embed(broader, 'search');
+          const retryResults = await searchPoints(retryVector, filter, maxResults, nestedFilters, rangeFilters);
+          if (retryResults.length > 0) {
+            // Re-score and return
+            for (const r of retryResults) {
+              const ec = computeEffectiveConfidence(r.payload);
+              const ab = 1 + (0.3 * Math.log2((r.payload.access_count || 0) + 1));
+              r._retryScore = +((r.score * ec * ab)).toFixed(4);
+            }
+            retryResults.sort((a, b) => b._retryScore - a._retryScore);
+            const retryFormatted = retryResults.slice(0, maxResults).map(r => ({
+              id: r.id, score: r.score, effective_score: r._retryScore, ...r.payload,
+            }));
+            return res.json({
+              query: q, expanded_query: broader, count: retryFormatted.length, results: retryFormatted,
+              retry: true,
+            });
+          }
+        } catch (e) { /* retry failed, return empty */ }
+      }
+    }
+
     const response = {
       query: q,
       count: results.length,
@@ -472,15 +582,18 @@ memoryRouter.get('/search', async (req, res) => {
     };
 
     // In full format, add retrieval metadata
-    if (isFull && useMultiPath) {
+    if (isFull) {
       response.retrieval = {
-        multi_path: true,
-        paths: {
+        multi_path: useMultiPath,
+        paths: useMultiPath ? {
           vector: vectorResults.length,
           keyword: keywordResults.length,
           graph: graphResults.length,
-        },
+        } : { vector: vectorResults.length },
       };
+      if (queryAnalysis.domain) response.retrieval.query_domain = queryAnalysis.domain;
+      if (searchQuery !== q) response.retrieval.expanded_query = searchQuery;
+      if (temporalResult.isTemporalQuery) response.retrieval.temporal = temporalResult;
     }
 
     res.json(response);

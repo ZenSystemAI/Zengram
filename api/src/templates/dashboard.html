@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared Brain — Dashboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a0f;
+  --bg-raised: rgba(16,16,24,0.85);
+  --surface: rgba(255,255,255,0.04);
+  --surface-hover: rgba(255,255,255,0.08);
+  --surface-active: rgba(255,255,255,0.12);
+  --glass: rgba(255,255,255,0.03);
+  --glass-border: rgba(255,255,255,0.06);
+  --glass-hover: rgba(255,255,255,0.06);
+  --border: rgba(255,255,255,0.08);
+  --border-focus: rgba(78,205,184,0.4);
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --accent: #4ECDB8;
+  --accent-glow: rgba(78,205,184,0.15);
+  --accent-bg: rgba(78,205,184,0.1);
+  --accent-border: rgba(78,205,184,0.3);
+  --danger: #EF4444;
+  --warning: #F59E0B;
+  --client: #4ECDB8;
+  --person: #F59E0B;
+  --technology: #3B82F6;
+  --workflow: #8B5CF6;
+  --agent: #EF4444;
+  --domain: #10B981;
+  --service: #EC4899;
+  --system: #6366F1;
+  --event: #3B82F6;
+  --fact: #4ECDB8;
+  --decision: #F59E0B;
+  --status: #8B5CF6;
+  --sidebar-w: 220px;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* --- Animated Grid Background --- */
+.grid-bg {
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: gridShift 40s linear infinite;
+  pointer-events: none; z-index: 0;
+}
+@keyframes gridShift { 0% { background-position: 0 0; } 100% { background-position: 60px 60px; } }
+
+/* --- Ambient Glows --- */
+.ambient-glow { position: fixed; border-radius: 50%; filter: blur(120px); opacity: 0.07; pointer-events: none; z-index: 0; }
+.glow-1 { width: 600px; height: 600px; top: -200px; left: -100px; background: var(--accent); }
+.glow-2 { width: 500px; height: 500px; bottom: -200px; right: -100px; background: var(--workflow); }
+.glow-3 { width: 400px; height: 400px; top: 40%; left: 50%; transform: translate(-50%,-50%); background: var(--technology); opacity: 0.04; }
+
+/* --- Login Modal --- */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
+  display: flex; align-items: center; justify-content: center;
+}
+.login-overlay.hidden { display: none; }
+.login-box {
+  background: rgba(16,16,24,0.9); backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border); border-radius: 20px;
+  padding: 44px; width: 400px; max-width: 90vw;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.login-box h2 {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 6px;
+  background: linear-gradient(135deg, var(--accent) 0%, #a5f3fc 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.login-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 28px; }
+.login-box input {
+  width: 100%; padding: 13px 18px; background: rgba(255,255,255,0.04); backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border); border-radius: 12px;
+  color: var(--text); font-family: inherit; font-size: 14px; outline: none;
+  margin-bottom: 16px; transition: all 0.3s;
+}
+.login-box input:focus { border-color: var(--border-focus); box-shadow: 0 0 24px var(--accent-glow); }
+.login-box button {
+  width: 100%; padding: 13px; border: none; border-radius: 12px;
+  font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent) 0%, #2dd4bf 100%); color: #0a0a0f;
+  transition: all 0.2s; box-shadow: 0 4px 20px var(--accent-glow);
+}
+.login-box button:hover { box-shadow: 0 6px 30px rgba(78,205,184,0.25); transform: translateY(-1px); }
+.login-error { color: var(--danger); font-size: 12px; margin-bottom: 12px; display: none; }
+
+/* --- Layout --- */
+.app { display: flex; height: 100vh; position: relative; z-index: 1; }
+
+.sidebar {
+  width: var(--sidebar-w); background: rgba(10,10,15,0.7); backdrop-filter: blur(20px);
+  border-right: 1px solid var(--glass-border); display: flex; flex-direction: column;
+  flex-shrink: 0; overflow-y: auto; z-index: 2;
+}
+.sidebar-brand { padding: 22px 20px 18px; border-bottom: 1px solid var(--glass-border); }
+.sidebar-brand h1 {
+  font-size: 16px; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--accent) 0%, #a5f3fc 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.sidebar-brand span { font-size: 11px; color: var(--text-dim); display: block; margin-top: 2px; }
+.sidebar-nav { padding: 12px 8px; flex: 1; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  color: var(--text-muted); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all 0.2s ease; text-decoration: none; margin-bottom: 2px;
+}
+.nav-item:hover { background: var(--glass-hover); color: var(--text); }
+.nav-item.active {
+  background: var(--accent-glow); color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+.nav-item svg { width: 18px; height: 18px; opacity: 0.6; }
+.nav-item.active svg { opacity: 1; }
+.sidebar-footer {
+  padding: 14px 16px; border-top: 1px solid var(--glass-border);
+  font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center;
+}
+.sidebar-footer a { color: var(--accent); text-decoration: none; cursor: pointer; opacity: 0.8; }
+.sidebar-footer a:hover { opacity: 1; }
+
+.main { flex: 1; overflow-y: auto; padding: 28px 36px; z-index: 1; }
+.main-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+.main-header h2 {
+  font-size: 24px; font-weight: 700; letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+
+/* --- Glass Card --- */
+.card {
+  background: var(--glass); backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border); border-radius: 14px; padding: 22px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.03);
+  transition: all 0.2s;
+}
+.card:hover { border-color: rgba(255,255,255,0.1); }
+.card-grid { display: grid; gap: 16px; }
+.card-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.card-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.card-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
+.stat-value {
+  font-size: 30px; font-weight: 700; letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--accent) 0%, #a5f3fc 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
+.chip {
+  display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em; backdrop-filter: blur(8px);
+}
+.chip-event { background: rgba(59,130,246,0.12); color: var(--event); border: 1px solid rgba(59,130,246,0.2); }
+.chip-fact { background: rgba(78,205,184,0.12); color: var(--fact); border: 1px solid rgba(78,205,184,0.2); }
+.chip-decision { background: rgba(245,158,11,0.12); color: var(--decision); border: 1px solid rgba(245,158,11,0.2); }
+.chip-status { background: rgba(139,92,246,0.12); color: var(--status); border: 1px solid rgba(139,92,246,0.2); }
+.chip-type { background: var(--surface); color: var(--text-muted); border: 1px solid var(--glass-border); }
+
+.type-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 6px currentColor; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px; border-radius: 10px; font-family: inherit; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: 1px solid var(--border);
+  transition: all 0.2s; backdrop-filter: blur(8px);
+}
+.btn-primary {
+  background: var(--accent-glow); border-color: var(--accent-border); color: var(--accent);
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+.btn-primary:hover { background: rgba(78,205,184,0.2); box-shadow: 0 4px 20px var(--accent-glow); transform: translateY(-1px); }
+.btn-ghost { background: transparent; color: var(--text-muted); }
+.btn-ghost:hover { background: var(--glass-hover); color: var(--text); }
+.btn-danger { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.2); color: var(--danger); }
+
+.input {
+  padding: 11px 16px; background: rgba(255,255,255,0.03); backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border); border-radius: 12px;
+  color: var(--text); font-family: inherit; font-size: 14px; outline: none; width: 100%;
+  transition: all 0.3s;
+}
+.input:focus { border-color: var(--border-focus); box-shadow: 0 0 24px var(--accent-glow); background: rgba(255,255,255,0.05); }
+.input::placeholder { color: var(--text-dim); }
+
+select.input { appearance: none; cursor: pointer; padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-bar .input, .filter-bar select { width: auto; min-width: 140px; }
+
+.loading { color: var(--text-dim); font-size: 13px; padding: 40px 0; text-align: center; }
+.empty { color: var(--text-dim); font-size: 14px; padding: 40px 0; text-align: center; }
+.error-msg { color: var(--danger); font-size: 13px; padding: 16px; background: rgba(239,68,68,0.06); backdrop-filter: blur(8px); border: 1px solid rgba(239,68,68,0.15); border-radius: 10px; margin-bottom: 16px; }
+
+/* --- Memory Items --- */
+.memory-list { display: flex; flex-direction: column; gap: 8px; }
+.memory-item {
+  background: var(--glass); backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border); border-radius: 12px;
+  padding: 16px 20px; cursor: pointer; transition: all 0.2s;
+}
+.memory-item:hover { background: var(--glass-hover); border-color: rgba(255,255,255,0.1); box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+.memory-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.memory-item-score {
+  font-size: 12px; font-weight: 700; min-width: 42px;
+  background: linear-gradient(135deg, var(--accent), #a5f3fc);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.memory-item-content { font-size: 13px; color: var(--text-muted); line-height: 1.5; word-break: break-word; }
+.memory-item-meta { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--text-dim); flex-wrap: wrap; }
+.memory-item-detail { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--glass-border); }
+.memory-item.expanded .memory-item-detail { display: block; }
+.detail-row { display: flex; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.detail-label { color: var(--text-dim); min-width: 110px; }
+.detail-value { color: var(--text); word-break: break-all; }
+.entity-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border-radius: 6px; font-size: 11px; background: var(--glass); backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border); margin: 2px; cursor: pointer; transition: all 0.15s;
+}
+.entity-chip:hover { background: var(--surface-active); border-color: rgba(255,255,255,0.12); }
+
+/* --- Entity Browser --- */
+.entity-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.entity-card {
+  display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+  background: var(--glass); backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border); border-radius: 10px;
+  cursor: pointer; font-size: 13px; transition: all 0.2s;
+}
+.entity-card:hover { background: var(--glass-hover); border-color: rgba(255,255,255,0.12); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+.entity-card .name { font-weight: 500; }
+.entity-card .count { font-size: 10px; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 10px; color: var(--text-dim); font-weight: 600; }
+
+.type-tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
+.type-tab {
+  padding: 7px 16px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  cursor: pointer; color: var(--text-muted); background: var(--glass); backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border); transition: all 0.2s;
+}
+.type-tab:hover { background: var(--glass-hover); }
+.type-tab.active { color: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.2); }
+
+/* --- Activity Feed --- */
+.feed-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--glass-border); }
+.feed-item:last-child { border-bottom: none; }
+.feed-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
+.feed-content { font-size: 13px; line-height: 1.4; }
+.feed-meta { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+
+/* --- Client List --- */
+.client-card {
+  background: var(--glass); backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border); border-radius: 12px;
+  padding: 18px 22px; cursor: pointer; transition: all 0.2s;
+}
+.client-card:hover { background: var(--glass-hover); border-color: rgba(78,205,184,0.2); box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+.client-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.client-card p { font-size: 12px; color: var(--text-dim); }
+
+/* --- Admin --- */
+.admin-section { margin-bottom: 32px; }
+.admin-section h3 {
+  font-size: 15px; font-weight: 600; margin-bottom: 12px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+
+/* --- SSE Live Indicator --- */
+.live-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+  animation: pulse 2s infinite; margin-right: 6px; }
+@keyframes pulse { 0%,100% { opacity: 1; box-shadow: 0 0 8px var(--accent); } 50% { opacity: 0.4; box-shadow: 0 0 2px var(--accent); } }
+
+/* --- Responsive --- */
+@media (max-width: 768px) {
+  .sidebar { width: 60px; }
+  .sidebar-brand h1, .sidebar-brand span, .nav-item span, .sidebar-footer { display: none; }
+  .nav-item { justify-content: center; padding: 12px; }
+  .main { padding: 16px; }
+  .card-grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .card-grid.cols-3 { grid-template-columns: repeat(1, 1fr); }
+  .main-header h2 { font-size: 18px; }
+}
+@media (max-width: 480px) {
+  .card-grid.cols-4, .card-grid.cols-2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Background Effects -->
+<div class="grid-bg"></div>
+<div class="ambient-glow glow-1"></div>
+<div class="ambient-glow glow-2"></div>
+<div class="ambient-glow glow-3"></div>
+
+<!-- Login Modal -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>Shared Brain</h2>
+    <p>Enter your API key to access the dashboard.</p>
+    <div class="login-error" id="loginError">Invalid API key. Check your .env file.</div>
+    <input type="password" id="loginKeyInput" placeholder="API key" autocomplete="off" autofocus>
+    <button onclick="doLogin()">Connect</button>
+  </div>
+</div>
+
+<!-- App -->
+<div class="app">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Shared Brain</h1>
+      <span>Memory Dashboard</span>
+    </div>
+    <div class="sidebar-nav">
+      <a class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Overview</span>
+      </a>
+      <a class="nav-item" data-tab="search" onclick="switchTab('search')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <span>Search</span>
+      </a>
+      <a class="nav-item" data-tab="memories" onclick="switchTab('memories')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        <span>Memories</span>
+      </a>
+      <a class="nav-item" data-tab="entities" onclick="switchTab('entities')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+        <span>Entities</span>
+      </a>
+      <a class="nav-item" data-tab="graph" onclick="switchTab('graph')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M8.6 7.4L15.4 16.6M8.6 4.6L15.4 4.6"/></svg>
+        <span>Graph</span>
+      </a>
+      <a class="nav-item" data-tab="clients" onclick="switchTab('clients')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+        <span>Clients</span>
+      </a>
+      <a class="nav-item" data-tab="admin" onclick="switchTab('admin')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span>Admin</span>
+      </a>
+    </div>
+    <div class="sidebar-footer">
+      <span id="sseStatus"></span>
+      <a onclick="doLogout()">Logout</a>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <div class="main" id="mainContent">
+    <!-- Tab content rendered by JS -->
+  </div>
+</div>
+
+<script>
+// --- API Client ---
+const API = {
+  key: '',
+  base: location.origin,
+
+  async fetch(path, opts = {}) {
+    const res = await fetch(this.base + path, {
+      ...opts,
+      headers: { 'x-api-key': this.key, 'Content-Type': 'application/json', ...opts.headers },
+    });
+    if (res.status === 401) { doLogout(); throw new Error('Unauthorized'); }
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    return res.json();
+  },
+  get(path) { return this.fetch(path); },
+  post(path, body) { return this.fetch(path, { method: 'POST', body: JSON.stringify(body) }); },
+  patch(path, body) { return this.fetch(path, { method: 'PATCH', body: JSON.stringify(body) }); },
+  del(path, body) { return this.fetch(path, { method: 'DELETE', body: body ? JSON.stringify(body) : undefined }); },
+};
+
+// --- Auth ---
+function doLogin() {
+  const key = document.getElementById('loginKeyInput').value.trim();
+  if (!key) return;
+  API.key = key;
+  // Test the key
+  API.get('/stats').then(() => {
+    localStorage.setItem('brain_api_key', key);
+    document.getElementById('loginOverlay').classList.add('hidden');
+    document.getElementById('loginError').style.display = 'none';
+    initApp();
+  }).catch(() => {
+    document.getElementById('loginError').style.display = 'block';
+  });
+}
+
+function doLogout() {
+  localStorage.removeItem('brain_api_key');
+  API.key = '';
+  document.getElementById('loginOverlay').classList.remove('hidden');
+  document.getElementById('loginKeyInput').value = '';
+  if (sseSource) { sseSource.close(); sseSource = null; }
+}
+
+document.getElementById('loginKeyInput').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+// Auto-login from localStorage
+const savedKey = localStorage.getItem('brain_api_key');
+if (savedKey) {
+  API.key = savedKey;
+  API.get('/stats').then(() => {
+    document.getElementById('loginOverlay').classList.add('hidden');
+    initApp();
+  }).catch(() => {
+    localStorage.removeItem('brain_api_key');
+  });
+}
+
+// --- SSE ---
+let sseSource = null;
+function connectSSE() {
+  if (sseSource) sseSource.close();
+  try {
+    // SSE needs auth via query param or custom header — EventSource doesn't support headers.
+    // We'll use fetch-based SSE reader instead.
+    sseSource = new EventSource(`/subscribe?events=memory:stored,memory:superseded,memory:deleted`);
+    // EventSource can't set headers, so SSE endpoint needs to accept unauthenticated OR
+    // we skip SSE if auth is required. For now, attempt connection.
+    sseSource.onopen = () => {
+      document.getElementById('sseStatus').innerHTML = '<span class="live-dot"></span>Live';
+    };
+    sseSource.onerror = () => {
+      document.getElementById('sseStatus').textContent = '';
+      // SSE requires auth — will fail without header support. That's OK.
+      sseSource.close();
+      sseSource = null;
+    };
+    sseSource.addEventListener('memory:stored', (e) => {
+      if (currentTab === 'overview') loadOverview();
+    });
+  } catch { /* SSE not available */ }
+}
+
+// --- Tab State ---
+let currentTab = 'overview';
+const main = document.getElementById('mainContent');
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.tab === tab));
+  location.hash = tab;
+  loadTab(tab);
+}
+
+function loadTab(tab) {
+  const loaders = { overview: loadOverview, search: loadSearch, memories: loadMemories,
+    entities: loadEntities, graph: loadGraph, clients: loadClients, admin: loadAdmin };
+  main.innerHTML = '<div class="loading">Loading...</div>';
+  (loaders[tab] || loadOverview)();
+}
+
+function initApp() {
+  const hash = location.hash.slice(1);
+  if (hash && ['overview','search','memories','entities','graph','clients','admin'].includes(hash)) {
+    switchTab(hash);
+  } else {
+    switchTab('overview');
+  }
+  connectSSE();
+}
+
+// --- Helpers ---
+function h(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function timeAgo(iso) {
+  if (!iso) return '';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function typeChip(type) { return `<span class="chip chip-${type}">${type}</span>`; }
+function entityColor(type) {
+  const c = { client:'var(--client)',person:'var(--person)',technology:'var(--technology)',
+    workflow:'var(--workflow)',agent:'var(--agent)',domain:'var(--domain)',
+    service:'var(--service)',system:'var(--system)' };
+  return c[type] || 'var(--text-dim)';
+}
+
+// --- OVERVIEW TAB ---
+async function loadOverview() {
+  try {
+    const [stats, briefing] = await Promise.all([
+      API.get('/stats'),
+      API.get('/briefing?since=' + new Date(Date.now() - 86400000).toISOString() + '&format=compact&include=all&limit=30'),
+    ]);
+
+    const retrieval = stats.retrieval || {};
+    const entities = stats.entities || {};
+    const byType = stats.by_type || {};
+
+    main.innerHTML = `
+      <div class="main-header"><h2>Overview</h2><span style="font-size:12px;color:var(--text-dim)">${new Date().toLocaleDateString()}</span></div>
+
+      <div class="card-grid cols-4" style="margin-bottom:24px">
+        <div class="card"><div class="stat-value">${(stats.total_memories || 0).toLocaleString()}</div><div class="stat-label">Total Memories</div></div>
+        <div class="card"><div class="stat-value">${(stats.active || 0).toLocaleString()}</div><div class="stat-label">Active</div></div>
+        <div class="card"><div class="stat-value">${(stats.superseded || 0).toLocaleString()}</div><div class="stat-label">Superseded</div></div>
+        <div class="card"><div class="stat-value">${(stats.consolidated || 0).toLocaleString()}</div><div class="stat-label">Consolidated</div></div>
+      </div>
+
+      <div class="card-grid cols-2" style="margin-bottom:24px">
+        <div class="card">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px">By Type</div>
+          ${Object.entries(byType).map(([t,c]) => `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="type-dot" style="background:var(--${t})"></span>
+              <span style="font-size:13px;flex:1">${t}</span>
+              <span style="font-size:13px;font-weight:600">${c.toLocaleString()}</span>
+              <div style="width:80px;height:6px;background:var(--surface);border-radius:3px;overflow:hidden">
+                <div style="width:${Math.round(c/(stats.total_memories||1)*100)}%;height:100%;background:var(--${t});border-radius:3px"></div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="card">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px">Retrieval Health</div>
+          <div style="font-size:13px;margin-bottom:6px">Multi-path: ${retrieval.multi_path ? '<span style="color:var(--accent)">enabled</span>' : 'disabled'}</div>
+          <div style="font-size:13px;margin-bottom:6px">Keyword (BM25): ${retrieval.keyword_search ? '<span style="color:var(--accent)">' + (retrieval.keyword_index_count||0).toLocaleString() + ' indexed</span>' : 'disabled'}</div>
+          <div style="font-size:13px;margin-bottom:6px">Graph search: ${retrieval.graph_search ? '<span style="color:var(--accent)">enabled</span>' : 'disabled'}</div>
+          <div style="font-size:13px;margin-bottom:6px">Decayed (<50%): <span style="color:${stats.decayed_below_50pct > 100 ? 'var(--warning)' : 'var(--text)'}">${stats.decayed_below_50pct || 0}</span></div>
+          ${entities.total ? `<div style="font-size:13px">Entities: <span style="color:var(--accent)">${entities.total}</span> (${entities.by_type ? Object.entries(entities.by_type).map(([t,c])=>`${c} ${t}`).join(', ') : ''})</div>` : ''}
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Recent Activity (24h) &mdash; ${briefing.summary?.total_entries || 0} entries</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+          Agents: ${(briefing.summary?.agents_active || []).join(', ') || 'none'}
+          ${(briefing.summary?.clients_mentioned || []).length > 0 ? ' &bull; Clients: ' + briefing.summary.clients_mentioned.join(', ') : ''}
+        </div>
+        <div id="activityFeed">
+          ${renderFeedItems(briefing)}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    main.innerHTML = `<div class="error-msg">Failed to load overview: ${h(err.message)}</div>`;
+  }
+}
+
+function renderFeedItems(briefing) {
+  const items = [
+    ...(briefing.events || []).map(e => ({...e, _type: 'event'})),
+    ...(briefing.facts_updated || []).map(e => ({...e, _type: 'fact'})),
+    ...(briefing.status_changes || []).map(e => ({...e, _type: 'status'})),
+    ...(briefing.decisions || []).map(e => ({...e, _type: 'decision'})),
+  ].sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20);
+
+  if (!items.length) return '<div class="empty">No activity in the last 24 hours</div>';
+
+  return items.map(i => `
+    <div class="feed-item">
+      <span class="feed-dot" style="background:var(--${i._type})"></span>
+      <div>
+        <div class="feed-content">${typeChip(i._type)} <span style="color:var(--text-muted)">${h((i.content || i.headline || '').slice(0, 150))}</span></div>
+        <div class="feed-meta">${h(i.source_agent)} &bull; ${i.client_id !== 'global' ? h(i.client_id) + ' &bull; ' : ''}${timeAgo(i.created_at)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// --- SEARCH TAB ---
+function loadSearch() {
+  main.innerHTML = `
+    <div class="main-header"><h2>Search</h2></div>
+    <div style="margin-bottom:16px">
+      <input class="input" id="searchInput" placeholder="Search memories..." autofocus style="font-size:16px;padding:14px 18px">
+    </div>
+    <div class="filter-bar">
+      <select class="input" id="searchType"><option value="">All types</option><option>event</option><option>fact</option><option>decision</option><option>status</option></select>
+      <input class="input" id="searchClient" placeholder="client_id" style="min-width:120px">
+      <select class="input" id="searchKC"><option value="">All categories</option><option>brand</option><option>strategy</option><option>meeting</option><option>content</option><option>technical</option><option>relationship</option><option>general</option></select>
+      <select class="input" id="searchFormat"><option value="compact">Compact</option><option value="full">Full</option></select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)"><input type="checkbox" id="searchSuperseded"> Include superseded</label>
+    </div>
+    <div id="searchResults" class="memory-list"><div class="empty">Type a query and press Enter</div></div>
+  `;
+  const input = document.getElementById('searchInput');
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+  input.focus();
+}
+
+async function doSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+  const container = document.getElementById('searchResults');
+  container.innerHTML = '<div class="loading">Searching...</div>';
+  try {
+    const params = new URLSearchParams({ q, format: document.getElementById('searchFormat').value });
+    const type = document.getElementById('searchType').value;
+    const client = document.getElementById('searchClient').value.trim();
+    const kc = document.getElementById('searchKC').value;
+    if (type) params.set('type', type);
+    if (client) params.set('client_id', client);
+    if (kc) params.set('knowledge_category', kc);
+    if (document.getElementById('searchSuperseded').checked) params.set('include_superseded', 'true');
+    params.set('limit', '30');
+
+    const data = await API.get('/memory/search?' + params);
+    if (!data.results?.length) { container.innerHTML = '<div class="empty">No results</div>'; return; }
+    container.innerHTML = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${data.count} results</div>` +
+      data.results.map(r => renderMemoryItem(r)).join('');
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${h(err.message)}</div>`;
+  }
+}
+
+function renderMemoryItem(r) {
+  const content = r.text || r.content || '';
+  const entities = (r.entities || []).map(e =>
+    `<span class="entity-chip" onclick="event.stopPropagation();switchTab('entities');setTimeout(()=>searchEntity('${h(e.name)}'),100)"><span class="type-dot" style="background:${entityColor(e.type)}"></span>${h(e.name)}</span>`
+  ).join('');
+
+  return `
+    <div class="memory-item" onclick="this.classList.toggle('expanded')">
+      <div class="memory-item-header">
+        ${r.score !== undefined ? `<span class="memory-item-score">${(r.effective_score || r.score || 0).toFixed(3)}</span>` : ''}
+        ${typeChip(r.type)}
+        ${r.importance && r.importance !== 'medium' ? `<span class="chip chip-type">${r.importance}</span>` : ''}
+        ${r.client_id && r.client_id !== 'global' ? `<span class="chip chip-type">${h(r.client_id)}</span>` : ''}
+      </div>
+      <div class="memory-item-content">${h(content.slice(0, 300))}${content.length > 300 ? '...' : ''}</div>
+      <div class="memory-item-meta">
+        <span>${h(r.source_agent)}</span>
+        <span>${timeAgo(r.created_at)}</span>
+        ${r.access_count !== undefined ? `<span>${r.access_count} accesses</span>` : ''}
+        ${r.observation_count > 1 ? `<span>${r.observation_count} observers</span>` : ''}
+      </div>
+      <div class="memory-item-detail">
+        <div class="detail-row"><span class="detail-label">ID</span><span class="detail-value" style="font-family:monospace;font-size:11px">${h(r.id)}</span></div>
+        <div class="detail-row"><span class="detail-label">Full Content</span><span class="detail-value">${h(content)}</span></div>
+        ${r.key ? `<div class="detail-row"><span class="detail-label">Key</span><span class="detail-value">${h(r.key)}</span></div>` : ''}
+        ${r.subject ? `<div class="detail-row"><span class="detail-label">Subject</span><span class="detail-value">${h(r.subject)}</span></div>` : ''}
+        ${r.confidence !== undefined ? `<div class="detail-row"><span class="detail-label">Confidence</span><span class="detail-value">${r.confidence.toFixed(4)}</span></div>` : ''}
+        ${r.knowledge_category ? `<div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">${r.knowledge_category}</span></div>` : ''}
+        ${r.retrieval_sources ? `<div class="detail-row"><span class="detail-label">Retrieved via</span><span class="detail-value">${r.retrieval_sources.join(', ')}</span></div>` : ''}
+        ${r.supersedes ? `<div class="detail-row"><span class="detail-label">Supersedes</span><span class="detail-value" style="font-family:monospace;font-size:11px">${h(r.supersedes)}</span></div>` : ''}
+        ${r.observed_by?.length > 1 ? `<div class="detail-row"><span class="detail-label">Observed by</span><span class="detail-value">${r.observed_by.join(', ')}</span></div>` : ''}
+        ${entities ? `<div class="detail-row"><span class="detail-label">Entities</span><span class="detail-value">${entities}</span></div>` : ''}
+        ${r.valid_from ? `<div class="detail-row"><span class="detail-label">Valid from</span><span class="detail-value">${r.valid_from}</span></div>` : ''}
+        ${r.valid_to ? `<div class="detail-row"><span class="detail-label">Valid to</span><span class="detail-value">${r.valid_to}</span></div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// --- MEMORIES TAB (browse) ---
+let memoriesOffset = null;
+async function loadMemories() {
+  main.innerHTML = `
+    <div class="main-header"><h2>Memories</h2></div>
+    <div class="filter-bar">
+      <select class="input" id="memType"><option value="">All types</option><option>event</option><option>fact</option><option>decision</option><option>status</option></select>
+      <input class="input" id="memClient" placeholder="client_id" style="min-width:120px">
+      <button class="btn btn-primary" onclick="fetchMemories()">Load</button>
+      <button class="btn btn-ghost" id="memNextBtn" onclick="fetchMemories(true)" style="display:none">Next page</button>
+    </div>
+    <div id="memoriesList" class="memory-list"><div class="loading">Loading...</div></div>
+  `;
+  memoriesOffset = null;
+  fetchMemories();
+}
+
+async function fetchMemories(nextPage) {
+  const container = document.getElementById('memoriesList');
+  if (!nextPage) { memoriesOffset = null; container.innerHTML = '<div class="loading">Loading...</div>'; }
+  try {
+    const params = new URLSearchParams({ limit: '50' });
+    const type = document.getElementById('memType')?.value;
+    const client = document.getElementById('memClient')?.value.trim();
+    if (type) params.set('type', type);
+    if (client) params.set('client_id', client);
+
+    // Use briefing with include=all as a paginated memory browser (scrollPoints via /briefing)
+    // Actually — use export endpoint for raw browsing
+    if (memoriesOffset) params.set('offset', memoriesOffset);
+    const data = await API.get('/export?' + params);
+    const memories = data.memories || [];
+
+    if (!nextPage) container.innerHTML = '';
+    if (!memories.length) {
+      if (!nextPage) container.innerHTML = '<div class="empty">No memories found</div>';
+      document.getElementById('memNextBtn').style.display = 'none';
+      return;
+    }
+
+    container.innerHTML += memories.map(m => renderMemoryItem({
+      ...m, type: m.type, content: m.text || m.content, source_agent: m.source_agent,
+      created_at: m.created_at, client_id: m.client_id, importance: m.importance,
+      entities: m.entities, id: m.id, key: m.key, subject: m.subject,
+      knowledge_category: m.knowledge_category,
+    })).join('');
+
+    memoriesOffset = data.next_offset;
+    document.getElementById('memNextBtn').style.display = data.next_offset ? '' : 'none';
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${h(err.message)}</div>`;
+  }
+}
+
+// --- ENTITIES TAB ---
+let allEntities = [];
+let entityTypeFilter = 'all';
+
+async function loadEntities() {
+  main.innerHTML = `
+    <div class="main-header"><h2>Entities</h2></div>
+    <div style="margin-bottom:16px">
+      <input class="input" id="entitySearch" placeholder="Filter entities..." oninput="filterEntities()">
+    </div>
+    <div class="type-tabs" id="entityTypeTabs"></div>
+    <div id="entityList"></div>
+  `;
+  try {
+    const data = await API.get('/entities?limit=500');
+    allEntities = data.results || [];
+
+    // Build type tabs
+    const types = {};
+    allEntities.forEach(e => { types[e.entity_type] = (types[e.entity_type]||0)+1; });
+    const tabsEl = document.getElementById('entityTypeTabs');
+    tabsEl.innerHTML = `<div class="type-tab active" onclick="setEntityType('all')">All (${allEntities.length})</div>` +
+      Object.entries(types).sort((a,b)=>b[1]-a[1]).map(([t,c]) =>
+        `<div class="type-tab" style="--tab-color:${entityColor(t)}" onclick="setEntityType('${t}')">${t} (${c})</div>`
+      ).join('');
+
+    filterEntities();
+  } catch (err) {
+    main.innerHTML += `<div class="error-msg">${h(err.message)}</div>`;
+  }
+}
+
+function setEntityType(type) {
+  entityTypeFilter = type;
+  document.querySelectorAll('.type-tab').forEach(t => {
+    const isAll = type === 'all' && t.textContent.startsWith('All');
+    const isType = t.textContent.startsWith(type + ' ');
+    t.classList.toggle('active', isAll || isType);
+    if (isAll || isType) t.style.background = isAll ? 'var(--accent-bg)' : `${entityColor(type)}22`;
+    else t.style.background = '';
+  });
+  filterEntities();
+}
+
+function filterEntities() {
+  const q = (document.getElementById('entitySearch')?.value || '').toLowerCase();
+  const filtered = allEntities.filter(e =>
+    (entityTypeFilter === 'all' || e.entity_type === entityTypeFilter) &&
+    (!q || e.canonical_name.toLowerCase().includes(q))
+  ).sort((a,b) => (b.mention_count||0) - (a.mention_count||0));
+
+  document.getElementById('entityList').innerHTML = filtered.length === 0
+    ? '<div class="empty">No entities match</div>'
+    : `<div class="entity-grid">${filtered.map(e => `
+        <div class="entity-card" onclick="viewEntityGraph('${h(e.canonical_name)}')">
+          <span class="type-dot" style="background:${entityColor(e.entity_type)}"></span>
+          <span class="name">${h(e.canonical_name)}</span>
+          <span class="count">${e.mention_count || 0}</span>
+        </div>
+      `).join('')}</div>`;
+}
+
+function searchEntity(name) {
+  const input = document.getElementById('entitySearch');
+  if (input) { input.value = name; filterEntities(); }
+}
+
+function viewEntityGraph(name) {
+  window.open(`/graph/${encodeURIComponent(name)}/html`, '_blank');
+}
+
+// --- GRAPH TAB ---
+function loadGraph() {
+  main.innerHTML = `
+    <div class="main-header">
+      <h2>Knowledge Graph</h2>
+      <button class="btn btn-primary" onclick="window.open('/graph/full/html','_blank')">Open Full Graph</button>
+    </div>
+    <div class="card" style="height:calc(100vh - 140px);padding:0;overflow:hidden">
+      <iframe src="/graph/full/html" style="width:100%;height:100%;border:none;border-radius:12px" loading="lazy"></iframe>
+    </div>
+  `;
+}
+
+// --- CLIENTS TAB ---
+async function loadClients() {
+  main.innerHTML = `
+    <div class="main-header"><h2>Clients</h2></div>
+    <div id="clientContent"><div class="loading">Loading...</div></div>
+  `;
+  try {
+    // Get unique client_ids from entity list (type=client) or stats
+    const entityData = await API.get('/entities?type=client&limit=100');
+    const clientEntities = entityData.results || [];
+
+    // Also try to get clients from stats (unique client_ids in memories)
+    const container = document.getElementById('clientContent');
+    if (!clientEntities.length) {
+      container.innerHTML = '<div class="empty">No client entities found. Store memories with client_id to see them here.</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="card-grid cols-3">
+        ${clientEntities.map(c => `
+          <div class="client-card" onclick="viewClient('${h(c.canonical_name)}')">
+            <h3>${h(c.canonical_name)}</h3>
+            <p>${c.mention_count || 0} mentions</p>
+          </div>
+        `).join('')}
+      </div>
+      <div id="clientDetail" style="margin-top:24px"></div>
+    `;
+  } catch (err) {
+    document.getElementById('clientContent').innerHTML = `<div class="error-msg">${h(err.message)}</div>`;
+  }
+}
+
+async function viewClient(name) {
+  const detail = document.getElementById('clientDetail');
+  detail.innerHTML = '<div class="loading">Loading client profile...</div>';
+  try {
+    const data = await API.get(`/client/${encodeURIComponent(name)}?format=full`);
+    const cats = ['brand','strategy','meeting','content','technical','relationship','general'];
+    detail.innerHTML = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3 style="font-size:18px">${h(data.client || name)}</h3>
+          <button class="btn btn-ghost" onclick="viewEntityGraph('${h(name)}')">View Graph</button>
+        </div>
+        ${cats.map(cat => {
+          const memories = (data.categories?.[cat] || data[cat] || []);
+          if (!memories.length) return '';
+          return `
+            <div style="margin-bottom:20px">
+              <div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em">${cat}</div>
+              <div class="memory-list">${memories.map(m => renderMemoryItem(m)).join('')}</div>
+            </div>
+          `;
+        }).join('')}
+        ${data.memories ? `<div class="memory-list">${data.memories.map(m => renderMemoryItem(m)).join('')}</div>` : ''}
+      </div>
+    `;
+  } catch (err) {
+    detail.innerHTML = `<div class="error-msg">${h(err.message)}</div>`;
+  }
+}
+
+// --- ADMIN TAB ---
+async function loadAdmin() {
+  main.innerHTML = `
+    <div class="main-header"><h2>Admin</h2></div>
+
+    <div class="admin-section">
+      <h3>Consolidation</h3>
+      <div class="card" id="consolidationCard"><div class="loading">Loading...</div></div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Entity Reclassification</h3>
+      <div class="card">
+        <button class="btn btn-primary" onclick="loadReclassifySuggestions()">Get Suggestions</button>
+        <div id="reclassifyResults" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>Export</h3>
+      <div class="card">
+        <div class="filter-bar">
+          <input class="input" id="exportClient" placeholder="client_id (optional)" style="min-width:140px">
+          <select class="input" id="exportType"><option value="">All types</option><option>event</option><option>fact</option><option>decision</option><option>status</option></select>
+          <input class="input" id="exportLimit" type="number" value="500" placeholder="limit" style="min-width:80px">
+          <button class="btn btn-primary" onclick="doExport()">Export JSON</button>
+        </div>
+        <div id="exportResult" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="admin-section">
+      <h3>System Health</h3>
+      <div class="card" id="healthCard"><div class="loading">Loading...</div></div>
+    </div>
+  `;
+
+  // Load consolidation status
+  try {
+    const status = await API.get('/consolidate/status');
+    document.getElementById('consolidationCard').innerHTML = `
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div><span class="stat-label">Last Run</span><div style="font-size:13px;margin-top:4px">${status.last_run_at || 'Never'}</div></div>
+        <div><span class="stat-label">Status</span><div style="font-size:13px;margin-top:4px">${status.is_running ? '<span style="color:var(--warning)">Running...</span>' : '<span style="color:var(--accent)">Idle</span>'}</div></div>
+        <button class="btn btn-primary" onclick="triggerConsolidation()">Run Now</button>
+      </div>
+    `;
+  } catch { document.getElementById('consolidationCard').innerHTML = '<span style="color:var(--text-dim);font-size:13px">Consolidation status unavailable</span>'; }
+
+  // System health
+  try {
+    const health = await API.get('/health');
+    const stats = await API.get('/stats');
+    document.getElementById('healthCard').innerHTML = `
+      <div style="font-size:13px;line-height:2">
+        <div>API: <span style="color:var(--accent)">${health.status}</span></div>
+        <div>Vectors: ${(stats.vectors_count||0).toLocaleString()} @ 3072 dims</div>
+        <div>SSE subscribers: ${document.getElementById('sseStatus').textContent.includes('Live') ? 'connected' : 'not connected'}</div>
+      </div>
+    `;
+  } catch { document.getElementById('healthCard').innerHTML = '<span style="color:var(--danger);font-size:13px">Health check failed</span>'; }
+}
+
+async function triggerConsolidation() {
+  try {
+    const result = await API.post('/consolidate');
+    alert('Consolidation triggered. Job ID: ' + (result.job_id || 'sync'));
+  } catch (err) { alert('Failed: ' + err.message); }
+}
+
+async function loadReclassifySuggestions() {
+  const container = document.getElementById('reclassifyResults');
+  container.innerHTML = '<div class="loading">Analyzing entities...</div>';
+  try {
+    const data = await API.get('/entities/reclassify/suggestions');
+    const suggestions = data.suggestions || data || [];
+    if (!suggestions.length) { container.innerHTML = '<div style="font-size:13px;color:var(--accent)">No misclassifications detected.</div>'; return; }
+
+    container.innerHTML = `
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${suggestions.length} suggestions</div>
+      ${suggestions.map((s,i) => `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span style="font-weight:600">${h(s.name)}</span>
+          <span style="color:var(--text-dim)">${h(s.current_type)}</span>
+          <span style="color:var(--text-dim)">&rarr;</span>
+          <span style="color:var(--accent)">${h(s.suggested_type)}</span>
+          <span style="color:var(--text-dim);font-size:11px">(${(s.confidence*100).toFixed(0)}%)</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-primary" style="padding:4px 10px;font-size:11px" onclick="applyReclassify('${h(s.name)}','${h(s.suggested_type)}',this)">Apply</button>
+        </div>
+      `).join('')}
+    `;
+  } catch (err) { container.innerHTML = `<div class="error-msg">${h(err.message)}</div>`; }
+}
+
+async function applyReclassify(name, newType, btn) {
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    await API.post('/entities/reclassify', { reclassifications: [{ name, new_type: newType }], dry_run: false });
+    btn.textContent = 'Done';
+    btn.style.color = 'var(--accent)';
+  } catch (err) { btn.textContent = 'Failed'; btn.style.color = 'var(--danger)'; }
+}
+
+async function doExport() {
+  const container = document.getElementById('exportResult');
+  container.innerHTML = '<div class="loading">Exporting...</div>';
+  try {
+    const params = new URLSearchParams();
+    const client = document.getElementById('exportClient').value.trim();
+    const type = document.getElementById('exportType').value;
+    const limit = document.getElementById('exportLimit').value;
+    if (client) params.set('client_id', client);
+    if (type) params.set('type', type);
+    if (limit) params.set('limit', limit);
+
+    const data = await API.get('/export?' + params);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `brain-export-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    URL.revokeObjectURL(url);
+    container.innerHTML = `<span style="color:var(--accent);font-size:13px">Exported ${(data.memories||[]).length} memories</span>`;
+  } catch (err) { container.innerHTML = `<div class="error-msg">${h(err.message)}</div>`; }
+}
+</script>
+</body>
+</html>

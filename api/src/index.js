@@ -12,6 +12,9 @@ import { clientRouter } from './routes/client.js';
 import { exportRouter } from './routes/export.js';
 import { graphRouter } from './routes/graph.js';
 import { reflectRouter } from './routes/reflect.js';
+import { subscribeRouter } from './routes/subscribe.js';
+import { dashboardRouter } from './routes/dashboard.js';
+import { collectionsRouter } from './routes/collections.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance, getBackendType } from './services/stores/interface.js';
@@ -20,6 +23,7 @@ import { initClientResolver } from './services/client-resolver.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 import { loadAliasCache } from './services/entities.js';
+import { runFeedbackLoop } from './services/feedback-loop.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandled-rejection]', reason);
@@ -49,6 +53,9 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'shared-brain', timestamp: new Date().toISOString() });
 });
 
+// Dashboard (no auth — it's HTML, API calls use x-api-key header from JS)
+app.use('/dashboard', dashboardRouter);
+
 // All other routes require API key + rate limiting
 app.use(authMiddleware);
 app.use(rateLimitMiddleware);
@@ -63,6 +70,8 @@ app.use('/client', clientRouter);
 app.use('/export', exportRouter);
 app.use('/graph', graphRouter);
 app.use('/reflect', reflectRouter);
+app.use('/subscribe', subscribeRouter);
+app.use('/collections', collectionsRouter);
 
 async function start() {
   try {
@@ -108,6 +117,12 @@ async function start() {
             console.log(`[consolidation] Complete: ${result.memories_processed} memories processed`);
           } catch (err) {
             console.error('[consolidation] Scheduled run failed:', err.message);
+          }
+          // Run feedback loop after consolidation (source trust + stale memory deprioritization)
+          try {
+            await runFeedbackLoop();
+          } catch (err) {
+            console.error('[feedback-loop] Scheduled run failed:', err.message);
           }
         });
         console.log(`[shared-brain] Consolidation scheduled: ${interval}`);

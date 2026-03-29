@@ -306,6 +306,51 @@ export function extractEntities(text, clientId, sourceAgent) {
   return entities;
 }
 
+/**
+ * Reclassify an entity's type in the structured store (SQLite/Postgres).
+ * Updates entity_type and returns count of linked memories affected.
+ * @param {string} entityName - Canonical entity name
+ * @param {string} newType - New entity type
+ * @param {object} storeFns - { findEntity, _getStoreInstance }
+ * @returns {Promise<{ updated: boolean, entity_id: number|null, memories_affected: number }>}
+ */
+export async function reclassifyEntity(entityName, newType, storeFns) {
+  const { findEntity, _getStoreInstance } = storeFns;
+  const entity = await findEntity(entityName);
+  if (!entity) {
+    return { updated: false, entity_id: null, memories_affected: 0, error: 'Entity not found' };
+  }
+
+  const store = _getStoreInstance();
+  if (!store || !store.db) {
+    return { updated: false, entity_id: entity.id, memories_affected: 0, error: 'No writable store' };
+  }
+
+  const oldType = entity.entity_type;
+
+  // Update entity_type in the entities table
+  store.db.prepare('UPDATE entities SET entity_type = @newType WHERE id = @id').run({
+    newType,
+    id: entity.id,
+  });
+
+  // Count linked memories
+  const linkCount = store.db.prepare(
+    'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id'
+  ).get({ id: entity.id });
+
+  // Update alias cache entry
+  addToAliasCache(entityName, entity.id, entity.canonical_name, newType);
+
+  return {
+    updated: true,
+    entity_id: entity.id,
+    old_type: oldType,
+    new_type: newType,
+    memories_affected: linkCount?.count || 0,
+  };
+}
+
 export async function linkExtractedEntities(entities, memoryId, storeFns) {
   const { createEntity, findEntity, linkEntityToMemory, createRelationship } = storeFns;
   const resolvedIds = [];
