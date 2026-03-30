@@ -41,7 +41,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: 'zengram', version: '2.4.0' },
+  { name: 'zengram', version: '2.5.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -426,6 +426,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['topic'],
       },
     },
+    {
+      name: 'brain_batch',
+      description: 'Store multiple memories in a single call with controlled parallelism. Useful for bulk data loading, agent bootstrap, or migration. Each memory is deduplicated independently. Returns per-item status (stored/deduplicated/failed).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          memories: {
+            type: 'array',
+            description: 'Array of memory objects to store (max 100)',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['event', 'fact', 'decision', 'status'] },
+                content: { type: 'string' },
+                source_agent: { type: 'string' },
+                client_id: { type: 'string' },
+                category: { type: 'string', enum: ['semantic', 'episodic', 'procedural'] },
+                importance: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+                knowledge_category: { type: 'string' },
+              },
+              required: ['type', 'content', 'source_agent'],
+            },
+          },
+        },
+        required: ['memories'],
+      },
+    },
   ],
 }));
 
@@ -645,6 +672,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             limit: args.limit,
           }),
           timeout: CONSOLIDATION_TIMEOUT,
+        });
+        break;
+      }
+
+      case 'brain_batch': {
+        if (!Array.isArray(args.memories) || args.memories.length === 0) {
+          return { content: [{ type: 'text', text: 'Error: "memories" must be a non-empty array' }], isError: true };
+        }
+        result = await apiRequest('/memory/batch', {
+          method: 'POST',
+          body: JSON.stringify({ memories: args.memories }),
+          timeout: Math.max(DEFAULT_TIMEOUT, args.memories.length * 3000), // ~3s per memory
         });
         break;
       }
