@@ -173,6 +173,10 @@ client.store(type="fact", content="Production DB is on db-prod-1", source_agent=
 results = client.search("database configuration")
 ```
 
+### Claude Code Skills
+
+Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to your project's `.claude/skills/` to get the `/sessionend` ritual — structured session reflections stored directly to Zengram. [Full guide](adapters/claude-code/README.md).
+
 ### Bash CLI, n8n, OpenClaw
 
 - **Bash**: `./adapters/bash/brain.sh store --type fact --content "Server migrated"`
