@@ -130,11 +130,11 @@ describe('extractEntities — capitalized phrases', () => {
   });
 
   it('extracts multi-word proper nouns', () => {
-    const text = 'Steven Johnson approved the deployment of Expert Local site';
+    const text = 'James Wilson approved the deployment of Metro Design site';
     const entities = extractEntities(text, 'global', 'test');
     const names = entities.map(e => e.name);
-    assert.ok(names.includes('Steven Johnson'));
-    assert.ok(names.includes('Expert Local'));
+    assert.ok(names.includes('James Wilson'));
+    assert.ok(names.includes('Metro Design'));
   });
 
   it('skips day and month names', () => {
@@ -159,7 +159,7 @@ describe('extractEntities — alias cache', () => {
   it('resolves aliases from DB entries', () => {
     // Simulate loading a DB alias
     loadAliasCache([
-      { alias: 'el', entity_id: 42, canonical_name: 'Expert Local', entity_type: 'client' },
+      { alias: 'md', entity_id: 42, canonical_name: 'Metro Design', entity_type: 'client' },
     ]);
 
     const text = 'Working on EL project today';

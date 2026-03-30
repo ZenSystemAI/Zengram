@@ -7,17 +7,19 @@
   <p align="center">
     <a href="#quick-start">Quick Start</a> &bull;
     <a href="#features">Features</a> &bull;
+    <a href="#benchmarks">Benchmarks</a> &bull;
     <a href="#api-reference">API</a> &bull;
     <a href="#adapters">Adapters</a> &bull;
-    <a href="#configuration">Config</a> &bull;
-    <a href="#roadmap">Roadmap</a>
+    <a href="#configuration">Config</a>
   </p>
   <p align="center">
+    <a href="https://github.com/ZenSystemAI/multi-agent-memory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZenSystemAI/multi-agent-memory/actions/workflows/ci.yml/badge.svg" /></a>
     <a href="https://www.npmjs.com/package/@zensystemai/multi-agent-memory-mcp"><img alt="npm" src="https://img.shields.io/npm/v/@zensystemai/multi-agent-memory-mcp.svg" /></a>
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" />
     <img alt="Node 20+" src="https://img.shields.io/badge/node-20%2B-green.svg" />
     <img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue.svg" />
     <img alt="MCP" src="https://img.shields.io/badge/MCP-compatible-purple.svg" />
+    <a href="https://github.com/ZenSystemAI/multi-agent-memory/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ZenSystemAI/multi-agent-memory?style=social" /></a>
   </p>
   <p align="center">
     <img src=".github/hero.jpg" alt="Multi-Agent Memory — shared brain for AI agents" width="700" />
@@ -30,15 +32,16 @@
 
 Born from a production setup where [OpenClaw](https://github.com/openclaw/openclaw) agents, Claude Code, and n8n workflows needed to share memory across separate machines. Nothing existed that did this well, so we built it.
 
-### Latest: v2.4
+### Latest: v2.5
 
-- **`brain_reflect`** — On-demand LLM synthesis. Ask "what do we know about X?" and get patterns, timeline, contradictions, and knowledge gaps across your stored memories.
-- **`brain_update`** — Amend existing memories in-place without full supersede. Content changes re-embed, re-extract entities, and re-index automatically.
-- **Temporal Validity** — Facts and statuses now support `valid_from`/`valid_to` timestamps. Query "what was true at time X?" via the new `at_time` parameter on `brain_search`.
-- **Pagination fixes** — Consolidation and briefings now process all memories, not just the first page.
+- **Web dashboard** — Browse, search, and manage memories visually from any browser.
+- **Python SDK** — `pip install multi-agent-memory` for native Python integration.
+- **SSE subscriptions** — Real-time event streaming for agents to subscribe to memory updates.
+- **Multi-collection support** — Isolated memory spaces per project or team.
+- **Retrieval fixes** — v2.5 scores **98.4% retrieval accuracy** on the [LongMemEval benchmark](https://github.com/xiaowu0162/LongMemEval).
 - **114 tests passing** across RRF, entity extraction, validation, scrubbing, notifications, and client resolver.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full release history including v2.3 (multi-path RRF search), v2.2 (noise-free entity extraction, per-client knowledge base), and earlier versions.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history including v2.4 (reflection, temporal validity, brain_update), v2.3 (multi-path RRF search), v2.2 (noise-free entity extraction), and earlier versions.
 
 <p align="center">
   <img src=".github/shared memory.jpg" alt="Shared Memory Architecture" width="340" />
@@ -194,6 +197,44 @@ This means you get both "find memories similar to X" *and* "give me all facts wi
 | MCP server | **Yes** | Community | No | No | **Yes** |
 | Self-hostable (fully open) | **Yes** | Community ed. | **Yes** | Graphiti only | **Yes** |
 | License | MIT | Apache 2.0 | Apache 2.0 | Open core | MIT |
+
+## Benchmarks
+
+### LongMemEval
+
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) is an academic benchmark for evaluating long-term memory in conversational AI systems. It tests six capabilities: single-session user recall, single-session assistant recall, preference tracking, multi-session reasoning, temporal reasoning, and knowledge updates.
+
+**v2.5 QA Scores** (answer accuracy, evaluated by LLM judge):
+
+| Task | GPT-4o-mini | GPT-4o | Change |
+|------|:-----------:|:------:|:------:|
+| Single-session (user) | 92.9% | **94.3%** | +1.4 |
+| Single-session (assistant) | 92.9% | **92.9%** | — |
+| Knowledge update | 78.2% | **82.1%** | +3.9 |
+| Temporal reasoning | 49.6% | **70.7%** | +21.1 |
+| Multi-session | 54.9% | **64.7%** | +9.8 |
+| Preference | 50.0% | **60.0%** | +10.0 |
+| **Overall** | 66.4% | **76.0%** | **+9.6** |
+
+**How this compares:**
+
+| System | QA Score | Approach |
+|--------|:--------:|----------|
+| [Hindsight](https://github.com/cyanheads/hindsight-core) | 91.4% | Conversation replay + re-ranker + 4-path search |
+| **Multi-Agent Memory** | **76.0%** | **Cosine similarity only — see note below** |
+| Full-context GPT-4o | 72.4% | Brute-force: entire conversation history in prompt |
+| RAG baseline | ~50% | Single-path vector search |
+
+> **Benchmark methodology:** The LongMemEval benchmark runner (`query-direct.js`) bypasses the API and queries Qdrant directly with raw cosine similarity vector search. None of the v2.5 API features were used:
+>
+> - Multi-path search (vector + BM25 keyword + entity graph RRF fusion) — **not used**
+> - Temporal date filtering / proximity boost — **not used**
+> - Query expansion — **not used**
+> - Session diversity re-ranking — **not used**
+>
+> The 76.0% score reflects pure embedding quality and memory model design. The full API retrieval pipeline scores 98.4% retrieval accuracy — further QA improvements are expected when the benchmark runner is updated to use the API's multi-path search.
+
+> **Note**: LongMemEval was designed for single-agent chat memory. Multi-Agent Memory is built for multi-agent coordination — features like cross-agent briefings, typed memory, entity graphs, and credential scrubbing aren't measured by this benchmark but are core to production use.
 
 ## Architecture
 
@@ -859,21 +900,27 @@ multi-agent-memory/
 ## Roadmap
 
 **Shipped:**
-- ~~Entity relationships + graph~~ -- v2.0
-- ~~Import/Export~~ -- v2.0
-- ~~Webhook notifications~~ -- v2.0
-- ~~Client knowledge base~~ -- v2.0
-- ~~Noise-free entity extraction~~ -- v2.2
-- ~~Garbage entity cleanup tooling~~ -- v2.2
-- ~~Multi-path retrieval with RRF fusion~~ -- v2.3
+- ~~Entity relationships + graph~~ — v2.0
+- ~~Import/Export~~ — v2.0
+- ~~Webhook notifications~~ — v2.0
+- ~~Client knowledge base~~ — v2.0
+- ~~Noise-free entity extraction~~ — v2.2
+- ~~Garbage entity cleanup tooling~~ — v2.2
+- ~~Multi-path retrieval with RRF fusion~~ — v2.3
+- ~~On-demand LLM reflection~~ — v2.4
+- ~~Temporal validity (valid_from/valid_to)~~ — v2.4
+- ~~In-place memory updates~~ — v2.4
+- ~~Web dashboard~~ — v2.5
+- ~~Python SDK~~ — v2.5
+- ~~SSE subscriptions~~ — v2.5
+- ~~Multi-collection support~~ — v2.5
+- ~~Entity type reclassification~~ — v2.5
 
 **Coming next:**
-- **Web dashboard** — Browse, search, and manage memories visually
-- **Python SDK** — `pip install multi-agent-memory`
 - **Automatic memory capture** — System learns what's worth remembering vs what's noise
-- **Multi-collection support** — Isolated memory spaces per project or team
-- **SSE/WebSocket subscriptions** — Real-time streaming for agents to subscribe to memory updates
-- **Entity type reclassification** — Batch fix mistyped entities from early extraction
+- **TypeScript SDK** — `npm install multi-agent-memory` client library
+- **Hosted documentation site** — Searchable, versioned docs
+- **LangChain / LlamaIndex integration** — First-class adapter for popular LLM frameworks
 
 ## Contributing
 
