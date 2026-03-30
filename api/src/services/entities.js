@@ -93,18 +93,64 @@ const CSS_LIKE_WORDS = new Set([
   'Overflow', 'Position', 'Cursor', 'Outline', 'Spacing', 'Align',
 ]);
 
-// In-memory alias cache
-let aliasCache = new Map();
+// --- LRU Alias Cache ---
+// Bounded map with LRU eviction to prevent unbounded memory growth.
+// Built-in entries (KNOWN_TECH, KNOWN_SYSTEMS) are pinned and never evicted.
+const ENTITY_CACHE_MAX = parseInt(process.env.ENTITY_CACHE_MAX) || 10000;
+
+class LRUMap {
+  constructor(maxSize) {
+    this.maxSize = maxSize;
+    this.cache = new Map();
+    this.pinned = new Set(); // keys that should never be evicted
+  }
+
+  get(key) {
+    const val = this.cache.get(key);
+    if (val === undefined) return undefined;
+    // Move to end (most recently used) — unless pinned (they stay put)
+    if (!this.pinned.has(key)) {
+      this.cache.delete(key);
+      this.cache.set(key, val);
+    }
+    return val;
+  }
+
+  set(key, value) {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict oldest non-pinned entry
+      for (const [k] of this.cache) {
+        if (!this.pinned.has(k)) {
+          this.cache.delete(k);
+          break;
+        }
+      }
+    }
+    this.cache.set(key, value);
+  }
+
+  pin(key) { this.pinned.add(key); }
+  has(key) { return this.cache.has(key); }
+  get size() { return this.cache.size; }
+}
+
+let aliasCache = new LRUMap(ENTITY_CACHE_MAX);
 
 export function loadAliasCache(entries) {
-  aliasCache = new Map();
+  aliasCache = new LRUMap(ENTITY_CACHE_MAX);
+  // Load built-in tech names as pinned entries (never evicted)
   for (const [alias, canonical] of Object.entries(KNOWN_TECH)) {
-    aliasCache.set(alias.toLowerCase(), {
+    const key = alias.toLowerCase();
+    aliasCache.set(key, {
       entityId: null,
       canonicalName: canonical,
       entityType: 'technology',
     });
+    aliasCache.pin(key);
   }
+  // Load DB entries (evictable)
   for (const e of entries) {
     aliasCache.set(e.alias.toLowerCase(), {
       entityId: e.entity_id,
@@ -112,7 +158,7 @@ export function loadAliasCache(entries) {
       entityType: e.entity_type,
     });
   }
-  console.log(`[entities] Alias cache loaded: ${aliasCache.size} entries (${entries.length} from DB, ${Object.keys(KNOWN_TECH).length} built-in)`);
+  console.log(`[entities] Alias cache loaded: ${aliasCache.size} entries (${entries.length} from DB, ${Object.keys(KNOWN_TECH).length} pinned built-in, max ${ENTITY_CACHE_MAX})`);
 }
 
 export function addToAliasCache(alias, entityId, canonicalName, entityType) {

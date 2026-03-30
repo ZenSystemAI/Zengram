@@ -14,12 +14,14 @@ const DECAY_TYPES = ['fact', 'status']; // events and decisions are historical â
 
 const QDRANT_TIMEOUT_MS = parseInt(process.env.QDRANT_TIMEOUT_MS) || 10000;
 
-async function qdrantRequest(path, options = {}) {
+const QDRANT_MAX_RETRIES = parseInt(process.env.QDRANT_MAX_RETRIES) || 1;
+
+async function qdrantRequestOnce(path, options, timeoutMs) {
   const headers = { 'Content-Type': 'application/json' };
   if (QDRANT_API_KEY) headers['api-key'] = QDRANT_API_KEY;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), QDRANT_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${QDRANT_URL}${path}`, { ...options, headers: { ...headers, ...options.headers }, signal: controller.signal });
     if (!res.ok) {
@@ -29,12 +31,33 @@ async function qdrantRequest(path, options = {}) {
     return res.json();
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error(`Qdrant request timed out after ${QDRANT_TIMEOUT_MS}ms: ${options.method || 'GET'} ${path}`);
+      throw new Error(`Qdrant request timed out after ${timeoutMs}ms: ${options.method || 'GET'} ${path}`);
     }
     throw err;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function qdrantRequest(path, options = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= QDRANT_MAX_RETRIES; attempt++) {
+    try {
+      // Double timeout on retry attempts
+      const timeoutMs = QDRANT_TIMEOUT_MS * (attempt + 1);
+      return await qdrantRequestOnce(path, options, timeoutMs);
+    } catch (err) {
+      lastErr = err;
+      const isTimeout = err.message?.includes('timed out');
+      const isNetworkError = err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET';
+      if ((isTimeout || isNetworkError) && attempt < QDRANT_MAX_RETRIES) {
+        console.warn(`[qdrant] Retry ${attempt + 1}/${QDRANT_MAX_RETRIES} for ${options.method || 'GET'} ${path}: ${err.message}`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 export async function initQdrant() {

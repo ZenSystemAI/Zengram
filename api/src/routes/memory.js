@@ -18,7 +18,7 @@ import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js
 import { reciprocalRankFusion } from '../services/rrf.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
-import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
+import { analyzeQuery, expandQuery, extractSearchTerms, getPreferenceKeywords } from '../services/query-expander.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 import { getClientResolver } from '../services/client-resolver.js';
@@ -356,7 +356,11 @@ memoryRouter.get('/search', async (req, res) => {
 
     // --- Multi-path retrieval ---
     const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is Qdrant-only
-    const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
+    const isPreferenceQuery = queryAnalysis.isPreference;
+    // Widen net for preference queries — they need more candidates to find sparse matches
+    const fetchLimit = useMultiPath
+      ? Math.min(maxResults * (isPreferenceQuery ? 3 : 2), 80)
+      : maxResults;
 
     // Always run vector search (use expanded query for better coverage)
     const vectorPromise = embed(searchQuery, 'search').then(vector =>
@@ -378,15 +382,28 @@ memoryRouter.get('/search', async (req, res) => {
         })
       : Promise.resolve([]);
 
-    const [vectorResults, keywordResults, graphResults] = await Promise.all([
-      vectorPromise, keywordPromise, graphPromise,
+    // Preference keyword path — extra BM25 search with preference indicators + topic
+    // Cheap (no embedding call), helps surface memories with explicit preference language
+    const prefKeywords = getPreferenceKeywords(q, queryAnalysis);
+    const preferenceKeywordPromise = (useMultiPath && isPreferenceQuery && isKeywordSearchAvailable() && prefKeywords)
+      ? keywordSearch(prefKeywords, filter, fetchLimit).catch(e => {
+          console.error('[memory:preference-keyword-search]', e.message);
+          return [];
+        })
+      : Promise.resolve([]);
+
+    const [vectorResults, keywordResults, graphResults, prefKeywordResults] = await Promise.all([
+      vectorPromise, keywordPromise, graphPromise, preferenceKeywordPromise,
     ]);
 
     // --- Build result set ---
     let finalResults;
     const retrievalSources = {};
 
-    if (useMultiPath && (keywordResults.length > 0 || graphResults.length > 0)) {
+    const hasMultiPathResults = keywordResults.length > 0 || graphResults.length > 0
+      || prefKeywordResults.length > 0;
+
+    if (useMultiPath && hasMultiPathResults) {
       // Build ranked lists for RRF
       const rankedLists = [
         vectorResults.map(r => ({ id: r.id, source: 'vector' })),
@@ -396,6 +413,9 @@ memoryRouter.get('/search', async (req, res) => {
       }
       if (graphResults.length > 0) {
         rankedLists.push(graphResults.map(r => ({ id: r.memory_id, source: 'graph' })));
+      }
+      if (prefKeywordResults.length > 0) {
+        rankedLists.push(prefKeywordResults.map(r => ({ id: r.memory_id, source: 'preference_keyword' })));
       }
 
       const fused = reciprocalRankFusion(rankedLists);
@@ -478,42 +498,67 @@ memoryRouter.get('/search', async (req, res) => {
       return base;
     });
 
-    // Re-sort by effective_score
-    results.sort((a, b) => b.effective_score - a.effective_score);
+    // Re-sort: by date for ordering queries, by effective_score otherwise
+    if (temporalResult.orderDirection) {
+      const dir = temporalResult.orderDirection === 'asc' ? 1 : -1;
+      results.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dir * (dateA - dateB);
+      });
+    } else {
+      results.sort((a, b) => b.effective_score - a.effective_score);
+    }
 
-    // --- Fix 5: Session deduplication in re-ranking ---
-    // Ensure results span unique sessions rather than clustering around the most similar one.
-    // Parse session_id from metadata or content header.
-    if (results.length > 3) {
+    // --- Session diversity re-ranking ---
+    // Ensure results span multiple agents/sessions rather than clustering from one source.
+    // For multi-agent systems: group by source_agent + date bucket (same agent, same day = same "session").
+    // Falls back to metadata.session_id or content header parsing for benchmark compatibility.
+    const MAX_PER_SESSION = 3; // cap results from any single session group
+    if (results.length > 3 && !temporalResult.orderDirection) {
       const diversified = [];
-      const sessionSeen = new Map(); // session_id → count
-      const noSession = [];
+      const sessionSeen = new Map(); // session_key → count
 
       for (const r of results) {
-        // Try metadata.session_id, then parse from content header "[Session: xxx |"
-        let sessionId = r.metadata?.session_id;
-        if (!sessionId) {
+        // Determine session key: explicit session_id > source_agent+date > source_agent
+        let sessionKey = r.metadata?.session_id;
+        if (!sessionKey) {
           const text = r.text || r.content || '';
-          const match = text.match(/\[Session:\s*(\S+)/);
-          if (match) sessionId = match[1];
+          const headerMatch = text.match(/\[Session:\s*(\S+)/);
+          if (headerMatch) sessionKey = headerMatch[1];
         }
-        if (!sessionId) { noSession.push(r); continue; }
+        if (!sessionKey) {
+          // Production fallback: group by agent + day
+          const agent = r.source_agent || 'unknown';
+          const date = r.created_at ? r.created_at.slice(0, 10) : 'unknown';
+          sessionKey = `${agent}::${date}`;
+        }
 
-        const count = sessionSeen.get(sessionId) || 0;
-        sessionSeen.set(sessionId, count + 1);
-        // Tag with session info for round-robin
-        r._sessionId = sessionId;
-        r._sessionRank = count;
+        const count = sessionSeen.get(sessionKey) || 0;
+        sessionSeen.set(sessionKey, count + 1);
+        r._sessionKey = sessionKey;
+        r._sessionRank = count; // 0 = first from this session, 1 = second, etc.
         diversified.push(r);
       }
 
-      // Round-robin: sort by session rank (0 first from all sessions, then 1, etc.), preserving score within rank
+      // Round-robin: take first result from each session, then second, etc.
+      // Within the same rank, preserve score order.
+      // Cap at MAX_PER_SESSION results per session group.
       diversified.sort((a, b) => a._sessionRank - b._sessionRank || b.effective_score - a.effective_score);
 
-      // Merge back: diversified first, then non-session results
+      // Apply per-session cap
+      const capped = [];
+      const sessionCounts = new Map();
+      for (const r of diversified) {
+        const cur = sessionCounts.get(r._sessionKey) || 0;
+        if (cur < MAX_PER_SESSION) {
+          capped.push(r);
+          sessionCounts.set(r._sessionKey, cur + 1);
+        }
+      }
+
       results.length = 0;
-      results.push(...diversified, ...noSession);
-      // Trim to maxResults
+      results.push(...capped);
       results.splice(maxResults);
     }
 
@@ -583,13 +628,15 @@ memoryRouter.get('/search', async (req, res) => {
 
     // In full format, add retrieval metadata
     if (isFull) {
+      const paths = { vector: vectorResults.length };
+      if (useMultiPath) {
+        paths.keyword = keywordResults.length;
+        paths.graph = graphResults.length;
+        if (prefKeywordResults.length > 0) paths.preference_keyword = prefKeywordResults.length;
+      }
       response.retrieval = {
         multi_path: useMultiPath,
-        paths: useMultiPath ? {
-          vector: vectorResults.length,
-          keyword: keywordResults.length,
-          graph: graphResults.length,
-        } : { vector: vectorResults.length },
+        paths,
       };
       if (queryAnalysis.domain) response.retrieval.query_domain = queryAnalysis.domain;
       if (searchQuery !== q) response.retrieval.expanded_query = searchQuery;
@@ -792,6 +839,133 @@ memoryRouter.delete('/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[memory:delete]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /memory/batch — Batch ingest multiple memories with controlled parallelism
+// Useful for agent bootstrap, migration, and bulk data loading.
+const BATCH_CONCURRENCY = parseInt(process.env.BATCH_CONCURRENCY) || 5;
+const BATCH_MAX_SIZE = parseInt(process.env.BATCH_MAX_SIZE) || 100;
+
+memoryRouter.post('/batch', async (req, res) => {
+  try {
+    const { memories } = req.body;
+
+    if (!Array.isArray(memories) || memories.length === 0) {
+      return res.status(400).json({ error: 'Request body must contain a non-empty "memories" array' });
+    }
+    if (memories.length > BATCH_MAX_SIZE) {
+      return res.status(400).json({ error: `Batch size ${memories.length} exceeds max ${BATCH_MAX_SIZE}` });
+    }
+
+    const results = [];
+    let succeeded = 0;
+    let failed = 0;
+    let deduplicated = 0;
+
+    // Process in chunks of BATCH_CONCURRENCY
+    for (let i = 0; i < memories.length; i += BATCH_CONCURRENCY) {
+      const chunk = memories.slice(i, i + BATCH_CONCURRENCY);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (mem, idx) => {
+          const globalIdx = i + idx;
+          try {
+            const { type, content, source_agent, client_id, category, importance, knowledge_category, metadata, valid_from, valid_to } = mem;
+
+            if (!type || !content || !source_agent) {
+              return { index: globalIdx, error: 'Missing required fields: type, content, source_agent', status: 'failed' };
+            }
+
+            // Enforce agent identity
+            if (req.authenticatedAgent && source_agent !== req.authenticatedAgent) {
+              return { index: globalIdx, error: `Agent identity mismatch`, status: 'failed' };
+            }
+
+            const cleanContent = scrubCredentials(content);
+            const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
+
+            // Dedup check
+            const duplicates = await findByPayload('content_hash', contentHash, {
+              active: true, client_id: client_id || 'global', type,
+            });
+            if (duplicates.length > 0) {
+              return { index: globalIdx, id: duplicates[0].id, status: 'deduplicated' };
+            }
+
+            const now = new Date().toISOString();
+            const pointId = crypto.randomUUID();
+
+            const payload = {
+              text: cleanContent,
+              type,
+              source_agent,
+              observed_by: [source_agent],
+              observation_count: 1,
+              client_id: client_id || 'global',
+              category: category || 'episodic',
+              importance: importance || 'medium',
+              knowledge_category: knowledge_category || 'general',
+              content_hash: contentHash,
+              created_at: now,
+              last_accessed_at: now,
+              access_count: 0,
+              confidence: 1.0,
+              active: true,
+              consolidated: false,
+              ...(metadata ? { metadata: scrubObject(metadata) } : {}),
+              ...((type === 'fact' || type === 'status') ? {
+                valid_from: valid_from || now,
+                valid_to: valid_to || null,
+              } : {}),
+            };
+
+            // Extract entities (fast path)
+            try {
+              const extracted = extractEntities(cleanContent, client_id || 'global', source_agent);
+              if (extracted.length > 0) {
+                payload.entities = extracted.map(e => ({ name: e.name, type: e.type }));
+              }
+            } catch (e) { /* non-blocking */ }
+
+            // Embed and store
+            const vector = await embed(cleanContent, 'store');
+            await upsertPoint(pointId, vector, payload);
+
+            // Index in keyword search (fire-and-forget)
+            if (isKeywordSearchAvailable()) {
+              indexMemory(pointId, cleanContent, {
+                client_id: client_id || 'global', source_agent, type,
+              }).catch(() => {});
+            }
+
+            return { index: globalIdx, id: pointId, status: 'stored' };
+          } catch (err) {
+            return { index: globalIdx, error: err.message, status: 'failed' };
+          }
+        })
+      );
+
+      for (const r of chunkResults) {
+        const val = r.status === 'fulfilled' ? r.value : { error: r.reason?.message, status: 'failed' };
+        results.push(val);
+        if (val.status === 'stored') succeeded++;
+        else if (val.status === 'deduplicated') deduplicated++;
+        else failed++;
+      }
+    }
+
+    console.log(`[memory:batch] ${succeeded} stored, ${deduplicated} deduped, ${failed} failed (${memories.length} total)`);
+
+    res.status(201).json({
+      total: memories.length,
+      succeeded,
+      deduplicated,
+      failed,
+      results,
+    });
+  } catch (err) {
+    console.error('[memory:batch]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
