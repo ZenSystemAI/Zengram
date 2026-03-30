@@ -6,16 +6,16 @@ API_URL="${BRAIN_API_URL:-http://localhost:8084}"
 SOURCE_AGENT="${BRAIN_AGENT_NAME:-my-agent}"
 
 # Load API key from environment or .env file
-if [ -z "${BRAIN_API_KEY:-}" ] && [ -f "${BRAIN_ENV_FILE:-$HOME/.config/multi-agent-memory/.env}" ]; then
+if [ -z "${BRAIN_API_KEY:-}" ] && [ -f "${BRAIN_ENV_FILE:-$HOME/.config/zengram/.env}" ]; then
   while IFS='=' read -r key value; do
     case "$key" in
       BRAIN_API_KEY) export "$key=$value" ;;
     esac
-  done < "${BRAIN_ENV_FILE:-$HOME/.config/multi-agent-memory/.env}"
+  done < "${BRAIN_ENV_FILE:-$HOME/.config/zengram/.env}"
 fi
 
 if [ -z "${BRAIN_API_KEY:-}" ]; then
-  echo "ERROR: BRAIN_API_KEY not set. Set it as env var or in ${BRAIN_ENV_FILE:-$HOME/.config/multi-agent-memory/.env}" >&2
+  echo "ERROR: BRAIN_API_KEY not set. Set it as env var or in ${BRAIN_ENV_FILE:-$HOME/.config/zengram/.env}" >&2
   exit 2
 fi
 

@@ -1,6 +1,6 @@
 # Changelog
 
-This changelog covers the entire Multi-Agent Memory project (API, MCP server, adapters, and tooling).
+This changelog covers the entire Zengram project (API, MCP server, adapters, and tooling).
 
 The canonical source is [`mcp-server/CHANGELOG.md`](mcp-server/CHANGELOG.md) -- this file mirrors it for convenience.
 

@@ -6,7 +6,7 @@ All configuration is via environment variables, defined in `.env` (loaded by Doc
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `BRAIN_API_KEY` | `openssl rand -hex 32` | Admin API key. Required for startup. Full access, no agent identity binding. |
+| `ZENGRAM_API_KEY` | `openssl rand -hex 32` | Admin API key. Required for startup. Full access, no agent identity binding. |
 | `PORT` | `8084` | Express server port. |
 
 ## Server

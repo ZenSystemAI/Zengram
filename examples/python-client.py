@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Multi-Agent Memory — Minimal Python Client
+Zengram — Minimal Python Client
 
 A lightweight wrapper around the Memory API. No dependencies beyond `requests`.
 
@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 
 class BrainClient:
-    """Minimal client for the Multi-Agent Memory API."""
+    """Minimal client for the Zengram API."""
 
     def __init__(self, api_url: str, api_key: str):
         self.api_url = api_url.rstrip("/")

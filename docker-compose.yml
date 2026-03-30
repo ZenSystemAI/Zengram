@@ -1,7 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: shared-brain-qdrant
+    container_name: zengram-qdrant
     ports:
       - "127.0.0.1:6334:6333"
       - "127.0.0.1:6335:6334"
@@ -24,7 +24,7 @@ services:
 
   memory-api:
     build: ./api
-    container_name: shared-brain-api
+    container_name: zengram-api
     ports:
       - "${API_BIND:-127.0.0.1}:8084:8084"
     env_file:
@@ -53,11 +53,11 @@ services:
   postgres:
     profiles: ["postgres"]
     image: postgres:16-alpine
-    container_name: shared-brain-postgres
+    container_name: zengram-postgres
     ports:
       - "127.0.0.1:5433:5432"
     environment:
-      POSTGRES_DB: shared_brain
+      POSTGRES_DB: zengram
       POSTGRES_USER: brain
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brain_secret}
     volumes:

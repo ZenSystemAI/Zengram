@@ -30,7 +30,7 @@ curl http://localhost:8084/health
 ```json
 {
   "status": "ok",
-  "service": "shared-brain",
+  "service": "zengram",
   "timestamp": "2026-03-29T12:00:00.000Z"
 }
 ```

@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-description: Suggest an idea for multi-agent-memory
+description: Suggest an idea for zengram
 labels: [enhancement]
 ---
 

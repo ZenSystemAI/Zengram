@@ -526,7 +526,7 @@ function buildFallbackIndex(grouped, stats, apiKey) {
   <input type="text" class="search-box" placeholder="Search entities..." id="search" autocomplete="off">
   ${entityRows}
 </div>
-<div class="footer">Powered by Shared Brain &mdash; Multi-Agent Memory</div>
+<div class="footer">Powered by Zengram</div>
 <script>
   document.getElementById('search').addEventListener('input', function() {
     const q = this.value.toLowerCase();

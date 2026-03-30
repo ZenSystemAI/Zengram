@@ -2,7 +2,7 @@ import pg from 'pg';
 
 export class PostgresStore {
   constructor() {
-    this.url = process.env.POSTGRES_URL || 'postgresql://localhost:5432/shared_brain';
+    this.url = process.env.POSTGRES_URL || 'postgresql://localhost:5432/zengram';
     this.pool = null;
   }
 

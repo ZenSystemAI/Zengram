@@ -1,14 +1,14 @@
-# @zensystemai/multi-agent-memory-mcp
+# @zensystemai/zengram-mcp
 
-MCP server for [Multi-Agent Memory](https://github.com/ZenSystemAI/multi-agent-memory) — gives Claude Code, Cursor, and other MCP-compatible AI tools access to a shared memory system that works across agents and machines.
+MCP server for [Zengram](https://github.com/ZenSystemAI/zengram) — gives Claude Code, Cursor, and other MCP-compatible AI tools access to a shared memory system that works across agents and machines.
 
 ## Prerequisites
 
-This package connects to the Multi-Agent Memory API. You need to run that first:
+This package connects to the Zengram API. You need to run that first:
 
 ```bash
-git clone https://github.com/ZenSystemAI/multi-agent-memory.git
-cd multi-agent-memory
+git clone https://github.com/ZenSystemAI/zengram.git
+cd zengram
 cp .env.example .env  # Set BRAIN_API_KEY, QDRANT_URL, QDRANT_API_KEY
 docker compose up -d
 ```
@@ -16,7 +16,7 @@ docker compose up -d
 ## Installation
 
 ```bash
-npm install -g @zensystemai/multi-agent-memory-mcp
+npm install -g @zensystemai/zengram-mcp
 ```
 
 ## Configuration
@@ -26,8 +26,8 @@ npm install -g @zensystemai/multi-agent-memory-mcp
 ```json
 {
   "mcpServers": {
-    "shared-brain": {
-      "command": "multi-agent-memory-mcp",
+    "zengram": {
+      "command": "zengram-mcp",
       "env": {
         "BRAIN_API_URL": "http://localhost:8084",
         "BRAIN_API_KEY": "your-api-key"
@@ -42,8 +42,8 @@ npm install -g @zensystemai/multi-agent-memory-mcp
 ```json
 {
   "mcpServers": {
-    "shared-brain": {
-      "command": "multi-agent-memory-mcp",
+    "zengram": {
+      "command": "zengram-mcp",
       "env": {
         "BRAIN_API_URL": "http://your-server:8084",
         "BRAIN_API_KEY": "your-api-key"
@@ -186,7 +186,7 @@ The consolidation engine refines types and discovers aliases over time.
 
 ## Full Documentation
 
-See the [main repository](https://github.com/ZenSystemAI/multi-agent-memory) for the complete API reference, adapter docs (Bash CLI, n8n, OpenClaw), deployment guide, and architecture overview.
+See the [main repository](https://github.com/ZenSystemAI/zengram) for the complete API reference, adapter docs (Bash CLI, n8n, OpenClaw), deployment guide, and architecture overview.
 
 ## License
 

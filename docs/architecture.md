@@ -1,6 +1,6 @@
 # System Architecture
 
-The Shared Brain is a multi-agent memory system that enables AI agents (Claude Code, n8n, Morpheus, etc.) to share persistent knowledge through a unified API. Memories are stored as vectors in Qdrant, indexed for full-text search, linked through an entity graph, and consolidated by an LLM on a schedule.
+Zengram is a multi-agent memory system that enables AI agents (Claude Code, n8n, Morpheus, etc.) to share persistent knowledge through a unified API. Memories are stored as vectors in Qdrant, indexed for full-text search, linked through an entity graph, and consolidated by an LLM on a schedule.
 
 ## High-Level Architecture
 
@@ -307,9 +307,9 @@ Defined in `docker-compose.yml`:
 
 | Container | Image | Ports | Volumes |
 |-----------|-------|-------|---------|
-| `shared-brain-qdrant` | `qdrant/qdrant:latest` | 6334:6333 (HTTP), 6335:6334 (gRPC) | `./data/qdrant` |
-| `shared-brain-api` | Built from `./api` | 8084:8084 | `./data` |
-| `shared-brain-postgres` (optional, `postgres` profile) | `postgres:16-alpine` | 5433:5432 | `./data/postgres` |
+| `zengram-qdrant` | `qdrant/qdrant:latest` | 6334:6333 (HTTP), 6335:6334 (gRPC) | `./data/qdrant` |
+| `zengram-api` | Built from `./api` | 8084:8084 | `./data` |
+| `zengram-postgres` (optional, `postgres` profile) | `postgres:16-alpine` | 5433:5432 | `./data/postgres` |
 
 All ports bind to `127.0.0.1` by default for security. Set `API_BIND=0.0.0.0` for LAN access.
 

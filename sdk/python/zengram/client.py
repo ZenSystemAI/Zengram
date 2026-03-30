@@ -1,4 +1,4 @@
-"""Core HTTP client for Multi-Agent Memory API."""
+"""Core HTTP client for Zengram API."""
 
 from __future__ import annotations
 
@@ -42,11 +42,11 @@ class RateLimitError(BrainError):
 
 
 class BrainClient:
-    """Synchronous client for the Multi-Agent Memory API.
+    """Synchronous client for the Zengram API.
 
     Usage::
 
-        from multi_agent_memory import BrainClient
+        from zengram import BrainClient
 
         brain = BrainClient(url="http://localhost:8084", api_key="your-key")
         brain.store(type="fact", content="The sky is blue", source_agent="my-agent", key="sky-color")
@@ -633,11 +633,11 @@ class BrainClient:
 
 
 class AsyncBrainClient:
-    """Async client for the Multi-Agent Memory API.
+    """Async client for the Zengram API.
 
     Usage::
 
-        from multi_agent_memory import AsyncBrainClient
+        from zengram import AsyncBrainClient
 
         async with AsyncBrainClient(url="http://localhost:8084", api_key="key") as brain:
             await brain.store(type="fact", content="...", source_agent="agent")

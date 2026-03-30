@@ -1,9 +1,9 @@
-"""Tests for Multi-Agent Memory Python SDK."""
+"""Tests for Zengram Python SDK."""
 
 import pytest
 import httpx
 import respx
-from multi_agent_memory import (
+from zengram import (
     BrainClient,
     BrainError,
     RateLimitError,
@@ -30,7 +30,7 @@ class TestHealth:
     @respx.mock
     def test_health(self, brain):
         respx.get(f"{API_URL}/health").mock(
-            return_value=httpx.Response(200, json={"status": "ok", "service": "shared-brain"})
+            return_value=httpx.Response(200, json={"status": "ok", "service": "zengram"})
         )
         result = brain.health()
         assert result["status"] == "ok"

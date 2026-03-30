@@ -1,11 +1,11 @@
 {
-  "name": "@zensystemai/multi-agent-memory-mcp",
+  "name": "@zensystemai/zengram-mcp",
   "version": "2.4.0",
   "type": "module",
   "description": "Persistent multi-path memory for AI agents — vector + BM25 keyword + entity graph search with RRF fusion, credential scrubbing, auto-consolidation, multi-backend storage (Qdrant + SQLite/Postgres)",
   "main": "src/index.js",
   "bin": {
-    "multi-agent-memory-mcp": "src/index.js"
+    "zengram-mcp": "src/index.js"
   },
   "files": [
     "src/",
@@ -43,9 +43,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ZenSystemAI/multi-agent-memory.git"
+    "url": "https://github.com/ZenSystemAI/zengram.git"
   },
-  "homepage": "https://github.com/ZenSystemAI/multi-agent-memory",
+  "homepage": "https://github.com/ZenSystemAI/zengram",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   }

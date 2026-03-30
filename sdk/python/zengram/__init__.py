@@ -1,4 +1,4 @@
-"""Multi-Agent Memory — Python SDK for cross-machine, cross-agent persistent memory."""
+"""Zengram — Python SDK for cross-machine, cross-agent persistent memory."""
 
 from .client import AsyncBrainClient, BrainClient, BrainError, RateLimitError
 from .models import (

@@ -21,7 +21,7 @@ docker-compose up -d
 
 # Verify health
 curl http://localhost:8084/health
-# Expected: {"status":"ok","service":"shared-brain","timestamp":"..."}
+# Expected: {"status":"ok","service":"zengram","timestamp":"..."}
 ```
 
 ### With Postgres (Production)
@@ -32,7 +32,7 @@ docker-compose --profile postgres up -d
 
 # Update .env:
 # STRUCTURED_STORE=postgres
-# POSTGRES_URL=postgresql://brain:brain_secret@postgres:5432/shared_brain
+# POSTGRES_URL=postgresql://brain:brain_secret@postgres:5432/zengram
 
 # Restart API to pick up changes
 docker-compose restart memory-api
@@ -97,7 +97,7 @@ Browse `http://localhost:8084/graph/html?key=YOUR_KEY` for the interactive entit
 
 ### 1. Express Health Check Failing (39K+ Vector Stress)
 
-**Symptom**: Docker reports `shared-brain-api` as unhealthy. API requests time out or return 502.
+**Symptom**: Docker reports `zengram-api` as unhealthy. API requests time out or return 502.
 
 **Root Cause**: At 39K+ vectors, some Qdrant operations (scroll, count) exceed the default timeout. The health check itself is lightweight (`GET /health` does not query Qdrant), but heavy API operations can cause cascading slowness.
 
@@ -261,7 +261,7 @@ All log lines use bracketed prefixes for grep-friendly filtering:
 
 | Prefix | Component |
 |--------|-----------|
-| `[shared-brain]` | Startup, shutdown, top-level events |
+| `[zengram]` | Startup, shutdown, top-level events |
 | `[qdrant]` | Qdrant collection/index operations |
 | `[embeddings]` | Embedding provider init/errors |
 | `[store]` | Structured store operations |

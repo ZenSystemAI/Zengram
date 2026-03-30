@@ -1,11 +1,11 @@
 # Shared Brain — Bash CLI Adapter
 
-Command-line interface for the Multi-Agent Memory system. Use this to store, search, and retrieve shared memories from any terminal-based agent or script.
+Command-line interface for the Zengram system. Use this to store, search, and retrieve shared memories from any terminal-based agent or script.
 
 ## Requirements
 
 - `curl` and `jq` must be installed
-- Set `BRAIN_API_KEY` as an environment variable, or place it in `$HOME/.config/multi-agent-memory/.env`
+- Set `BRAIN_API_KEY` as an environment variable, or place it in `$HOME/.config/zengram/.env`
 
 ## Configuration
 
@@ -14,7 +14,7 @@ Command-line interface for the Multi-Agent Memory system. Use this to store, sea
 | `BRAIN_API_URL` | `http://localhost:8084` | API server URL |
 | `BRAIN_AGENT_NAME` | `my-agent` | Your agent's identifier |
 | `BRAIN_API_KEY` | *(required)* | API key for authentication |
-| `BRAIN_ENV_FILE` | `$HOME/.config/multi-agent-memory/.env` | Path to env file |
+| `BRAIN_ENV_FILE` | `$HOME/.config/zengram/.env` | Path to env file |
 
 ## Commands
 

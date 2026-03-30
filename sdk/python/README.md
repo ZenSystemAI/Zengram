@@ -1,17 +1,17 @@
-# Multi-Agent Memory — Python SDK
+# Zengram — Python SDK
 
-Python client for the [Multi-Agent Memory](https://github.com/ZenSystemAI/multi-agent-memory) API. Store, search, and manage shared memories across AI agents.
+Python client for the [Zengram](https://github.com/ZenSystemAI/zengram) API. Store, search, and manage shared memories across AI agents.
 
 ## Install
 
 ```bash
-pip install multi-agent-memory
+pip install zengram
 ```
 
 ## Quick Start
 
 ```python
-from multi_agent_memory import BrainClient
+from zengram import BrainClient
 
 brain = BrainClient(
     url="http://localhost:8084",
@@ -46,7 +46,7 @@ print(f"Total memories: {stats.total_memories}, Active: {stats.active}")
 
 ```python
 import asyncio
-from multi_agent_memory import AsyncBrainClient
+from zengram import AsyncBrainClient
 
 async def main():
     async with AsyncBrainClient(url="http://localhost:8084", api_key="key", source_agent="async-agent") as brain:
@@ -103,7 +103,7 @@ BrainClient(
 ### Error Handling
 
 ```python
-from multi_agent_memory import BrainClient, BrainError, RateLimitError
+from zengram import BrainClient, BrainError, RateLimitError
 
 brain = BrainClient(url="http://localhost:8084", api_key="key")
 

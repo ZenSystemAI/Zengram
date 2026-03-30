@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-description: Report a bug in multi-agent-memory
+description: Report a bug in zengram
 labels: [bug]
 title: "[Bug] "
 ---

@@ -1,11 +1,11 @@
-# Contributing to Multi-Agent Memory
+# Contributing to Zengram
 
 Thanks for your interest in contributing! This project aims to be the best open-source cross-agent memory system, and contributions help make that happen.
 
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/multi-agent-memory.git`
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/zengram.git`
 3. Create a branch: `git checkout -b my-feature`
 4. Make your changes
 5. Push and open a pull request

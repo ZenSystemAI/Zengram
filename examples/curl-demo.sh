@@ -2,7 +2,7 @@
 set -e
 
 # =============================================================================
-# Multi-Agent Memory — Full API Demo (curl + jq)
+# Zengram — Full API Demo (curl + jq)
 #
 # Walks through every endpoint in the Memory API:
 #   1. Store memories (event, fact, status, decision)

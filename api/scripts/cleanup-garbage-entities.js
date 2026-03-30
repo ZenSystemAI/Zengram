@@ -13,7 +13,7 @@
 
 import pg from 'pg';
 
-const POSTGRES_URL = process.env.POSTGRES_URL || 'postgresql://localhost:5432/shared_brain';
+const POSTGRES_URL = process.env.POSTGRES_URL || 'postgresql://localhost:5432/zengram';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // --- Same filters as entities.js v2.2 ---

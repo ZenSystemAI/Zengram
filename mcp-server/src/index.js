@@ -41,7 +41,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: 'shared-brain', version: '2.4.0' },
+  { name: 'zengram', version: '2.4.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -662,7 +662,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[shared-brain-mcp] Connected');
+  console.error('[zengram-mcp] Connected');
 }
 
 main().catch(console.error);

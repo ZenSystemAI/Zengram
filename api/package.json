@@ -1,5 +1,5 @@
 {
-  "name": "shared-brain-api",
+  "name": "zengram-api",
   "version": "1.0.0",
   "type": "module",
   "description": "Centralized memory API for cross-agent knowledge sharing",

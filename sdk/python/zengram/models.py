@@ -1,4 +1,4 @@
-"""Data models for Multi-Agent Memory SDK."""
+"""Data models for Zengram SDK."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 set -e
 
 # =============================================================================
-# Multi-Agent Memory — Multi-Agent Scenario
+# Zengram — Multi-Agent Scenario
 #
 # Simulates three agents sharing memory through the same brain:
 #
