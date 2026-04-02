@@ -557,6 +557,12 @@ memoryRouter.get('/search', async (req, res) => {
         }
       }
 
+      // Clean internal fields before response
+      for (const r of capped) {
+        delete r._sessionKey;
+        delete r._sessionRank;
+      }
+
       results.length = 0;
       results.push(...capped);
       results.splice(maxResults);
@@ -896,6 +902,24 @@ memoryRouter.post('/batch', async (req, res) => {
             const now = new Date().toISOString();
             const pointId = crypto.randomUUID();
 
+            // --- Supersedes logic (facts by key, statuses by subject) ---
+            let supersedesId = null;
+            if (type === 'fact' && mem.key) {
+              const matches = await findByPayload('key', mem.key, { active: true, type: 'fact' }, 1);
+              if (matches.length > 0) {
+                supersedesId = matches[0].id;
+                await updatePointPayload(matches[0].id, { active: false, superseded_by: pointId, superseded_at: now, valid_to: now });
+                deactivateMemory(matches[0].id).catch(() => {});
+              }
+            } else if (type === 'status' && mem.subject) {
+              const matches = await findByPayload('subject', mem.subject, { active: true, type: 'status' }, 1);
+              if (matches.length > 0) {
+                supersedesId = matches[0].id;
+                await updatePointPayload(matches[0].id, { active: false, superseded_by: pointId, superseded_at: now, valid_to: now });
+                deactivateMemory(matches[0].id).catch(() => {});
+              }
+            }
+
             const payload = {
               text: cleanContent,
               type,
@@ -913,6 +937,9 @@ memoryRouter.post('/batch', async (req, res) => {
               confidence: 1.0,
               active: true,
               consolidated: false,
+              supersedes: supersedesId,
+              ...(type === 'fact' && mem.key ? { key: mem.key } : {}),
+              ...(type === 'status' && mem.subject ? { subject: mem.subject, status_value: mem.status_value } : {}),
               ...(metadata ? { metadata: scrubObject(metadata) } : {}),
               ...((type === 'fact' || type === 'status') ? {
                 valid_from: valid_from || now,
@@ -921,15 +948,27 @@ memoryRouter.post('/batch', async (req, res) => {
             };
 
             // Extract entities (fast path)
+            let extractedEntities = [];
             try {
-              const extracted = extractEntities(cleanContent, client_id || 'global', source_agent);
-              if (extracted.length > 0) {
-                payload.entities = extracted.map(e => ({ name: e.name, type: e.type }));
+              extractedEntities = extractEntities(cleanContent, client_id || 'global', source_agent);
+              if (extractedEntities.length > 0) {
+                payload.entities = extractedEntities.map(e => ({ name: e.name, type: e.type }));
               }
             } catch (e) { /* non-blocking */ }
 
-            // Embed and store
+            // Embed
             const vector = await embed(cleanContent, 'store');
+
+            // Relevance scoring (reuses vector — no extra embed call)
+            try {
+              const relevanceResult = await scoreRelevance({
+                content: cleanContent, type, importance: importance || 'medium',
+                source_agent, entities: extractedEntities, vector, client_id: client_id || 'global',
+              });
+              Object.assign(payload, relevancePayloadFields(relevanceResult));
+            } catch (e) { /* non-blocking */ }
+
+            // Store in Qdrant
             await upsertPoint(pointId, vector, payload);
 
             // Index in keyword search (fire-and-forget)
@@ -939,7 +978,36 @@ memoryRouter.post('/batch', async (req, res) => {
               }).catch(() => {});
             }
 
-            return { index: globalIdx, id: pointId, status: 'stored' };
+            // Write to structured DB (fire-and-forget)
+            if (isStoreAvailable()) {
+              const storeData = {
+                content: cleanContent, source_agent, client_id: client_id || 'global',
+                category: category || 'episodic', importance: importance || 'medium',
+                knowledge_category: knowledge_category || 'general', content_hash: contentHash, created_at: now,
+              };
+              try {
+                if (type === 'event' || type === 'decision') {
+                  storeData.type = type;
+                  createEvent(storeData);
+                } else if (type === 'fact') {
+                  storeData.key = mem.key || contentHash;
+                  storeData.value = cleanContent;
+                  upsertFact(storeData);
+                } else if (type === 'status') {
+                  storeData.subject = mem.subject || 'unknown';
+                  storeData.status = mem.status_value || cleanContent;
+                  upsertStatus(storeData);
+                }
+              } catch (e) { /* non-blocking — Qdrant is source of truth */ }
+            }
+
+            // Link entities (fire-and-forget)
+            if (isEntityStoreAvailable() && extractedEntities.length > 0) {
+              linkExtractedEntities(extractedEntities, pointId, { createEntity, findEntity, linkEntityToMemory, createRelationship })
+                .catch(e => console.error('[memory:batch:entities]', e.message));
+            }
+
+            return { index: globalIdx, id: pointId, status: 'stored', supersedes: supersedesId };
           } catch (err) {
             return { index: globalIdx, error: err.message, status: 'failed' };
           }

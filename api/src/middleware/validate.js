@@ -3,6 +3,7 @@
 const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
 const VALID_TYPES = ['event', 'fact', 'decision', 'status'];
 const VALID_IMPORTANCE = ['critical', 'high', 'medium', 'low'];
+const VALID_KNOWLEDGE_CATEGORIES = ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'];
 const MAX_CONTENT_LENGTH = 10_000;
 const MAX_METADATA_SIZE = 10_240; // 10 KB serialized
 const MAX_METADATA_DEPTH = 3;
@@ -51,6 +52,12 @@ export function validateMetadata(metadata) {
   return null;
 }
 
+export function validateKnowledgeCategory(kc) {
+  if (kc === undefined || kc === null) return null; // optional, defaults to 'general'
+  if (!VALID_KNOWLEDGE_CATEGORIES.includes(kc)) return `Invalid knowledge_category: ${kc}. Must be one of: ${VALID_KNOWLEDGE_CATEGORIES.join(', ')}`;
+  return null;
+}
+
 export function validateStringField(value, name, maxLen = MAX_STRING_FIELD_LENGTH) {
   if (value === undefined || value === null) return null; // optional
   if (typeof value !== 'string') return `${name} must be a string`;
@@ -80,11 +87,12 @@ export function validateTemporalFields(valid_from, valid_to) {
 }
 
 // Validate all inputs for POST /memory and return first error or null
-export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value, valid_from, valid_to }) {
+export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value, valid_from, valid_to, knowledge_category }) {
   return validateType(type)
     || validateContent(content)
     || validateSourceAgent(source_agent)
     || validateImportance(importance)
+    || validateKnowledgeCategory(knowledge_category)
     || validateMetadata(metadata)
     || validateClientId(client_id)
     || validateStringField(key, 'key', 128)

@@ -112,15 +112,22 @@ entitiesRouter.post('/reclassify', async (req, res) => {
       if (isDryRun) {
         // Count linked memories for preview
         const store = _getStoreInstance();
-        const linkCount = store?.db
-          ? store.db.prepare('SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id').get({ id: entity.id })
-          : { count: 0 };
+        let memoriesAffected = 0;
+        if (store?.pool) {
+          const result = await store.pool.query(
+            'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
+          );
+          memoriesAffected = parseInt(result.rows[0]?.count) || 0;
+        } else if (store?.db) {
+          const linkCount = store.db.prepare('SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id').get({ id: entity.id });
+          memoriesAffected = linkCount?.count || 0;
+        }
 
         results.push({
           name: entity.canonical_name,
           old_type: oldType,
           new_type: entry.new_type,
-          memories_affected: linkCount?.count || 0,
+          memories_affected: memoriesAffected,
         });
       } else {
         // 1. Update structured store

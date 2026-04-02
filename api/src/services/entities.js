@@ -241,11 +241,32 @@ function isJunkQuotedName(name) {
   if (/^[a-z_]+_[a-z_]+$/.test(name)) return true;          // snake_case
 
   // Shell commands (starts with common commands)
-  if (/^(docker|git|npm|ssh|curl|cd|ls|rm|cp|mv|mkdir|chmod|sudo|pip|node|bun)\s/i.test(name)) return true;
+  if (/^(docker|git|npm|ssh|curl|cd|ls|rm|cp|mv|mkdir|chmod|sudo|pip|node|bun|systemctl|openclaw|npx|yarn|cat|echo|grep|sed|awk|find|tail|head|kill|ps|top|htop|journalctl|certbot|nginx|ufw)\s/i.test(name)) return true;
+
+  // Shell flags/options (starts with --)
+  if (/^--\w/.test(name)) return true;
+
+  // Imperative instructions / action phrases (common in agent logs)
+  if (/^(NEVER|ALWAYS|Save|Drop|Run|Stop|Start|Check|Set|Get|Use|Add|Remove|Fix|Build|Move|Send|Pull|Push|Keep|Make|Take|Give|Turn|Put|Let|Try|Go)\s/i.test(name)) return true;
+
+  // Marketing taglines / slogans (contain numbers + superlatives or guarantees)
+  if (/\b(Guaranteed|Free|Save \$|since \d|trusted by|\d+\+?\s+(families|clients|customers|businesses)|Response|Certified|doubles every|per hour|per day)\b/i.test(name)) return true;
+
+  // JavaScript/code keywords as first word
+  if (/^(const|let|var|function|class|import|export|return|async|await|if|else|for|while|switch|case|throw|new|typeof|void)\s/i.test(name)) return true;
 
   // Error codes, log messages
   if (/^(ERROR|WARN|INFO|DEBUG|FAIL|OK|TRUE|FALSE)/.test(name)) return true;
   if (/^(Prompt|Failed|Ignored|Should)\s/i.test(name)) return true;
+
+  // Sentence fragments starting with "—" or em-dash
+  if (/^[—–\-]\s/.test(name)) return true;
+
+  // All-lowercase multi-word (likely a command or description, not a name)
+  if (/^[a-z]+(\s+[a-z]+)+$/.test(name)) return true;
+
+  // Contains digits mixed with words (likely a measurement, version, or spec)
+  if (/\b\d+\s*(min|px|ms|em|rem|hr|sec|MB|KB|GB|TB)\b/i.test(name)) return true;
 
   // Very short single words (not in alias cache — checked later)
   if (!/\s/.test(name) && name.length < 5) return true;
@@ -368,22 +389,32 @@ export async function reclassifyEntity(entityName, newType, storeFns) {
   }
 
   const store = _getStoreInstance();
-  if (!store || !store.db) {
+  if (!store || (!store.db && !store.pool)) {
     return { updated: false, entity_id: entity.id, memories_affected: 0, error: 'No writable store' };
   }
 
   const oldType = entity.entity_type;
 
-  // Update entity_type in the entities table
-  store.db.prepare('UPDATE entities SET entity_type = @newType WHERE id = @id').run({
-    newType,
-    id: entity.id,
-  });
+  let memoriesAffected = 0;
 
-  // Count linked memories
-  const linkCount = store.db.prepare(
-    'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id'
-  ).get({ id: entity.id });
+  if (store.pool) {
+    // Postgres path
+    await store.pool.query('UPDATE entities SET entity_type = $1 WHERE id = $2', [newType, entity.id]);
+    const linkResult = await store.pool.query(
+      'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
+    );
+    memoriesAffected = parseInt(linkResult.rows[0]?.count) || 0;
+  } else {
+    // SQLite path
+    store.db.prepare('UPDATE entities SET entity_type = @newType WHERE id = @id').run({
+      newType,
+      id: entity.id,
+    });
+    const linkCount = store.db.prepare(
+      'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id'
+    ).get({ id: entity.id });
+    memoriesAffected = linkCount?.count || 0;
+  }
 
   // Update alias cache entry
   addToAliasCache(entityName, entity.id, entity.canonical_name, newType);
@@ -393,7 +424,7 @@ export async function reclassifyEntity(entityName, newType, storeFns) {
     entity_id: entity.id,
     old_type: oldType,
     new_type: newType,
-    memories_affected: linkCount?.count || 0,
+    memories_affected: memoriesAffected,
   };
 }
 

@@ -2,7 +2,11 @@ import crypto from 'crypto';
 import { complete, getLLMInfo } from './llm/interface.js';
 import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './qdrant.js';
 import { embed } from './embedders/interface.js';
-import { isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, upsertAlias, loadAllAliases, createRelationship } from './stores/interface.js';
+import {
+  isEntityStoreAvailable, isStoreAvailable, createEntity, findEntity, linkEntityToMemory,
+  upsertAlias, loadAllAliases, createRelationship, createEvent, upsertFact,
+} from './stores/interface.js';
+import { isKeywordSearchAvailable, indexMemory } from './keyword-search.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
 import { dispatchNotification } from './notifications.js';
 
@@ -349,6 +353,31 @@ async function consolidateBatch(points, clientId) {
         metadata: { source_memories: fact.source_memories, consolidation_type: 'merged' },
       });
 
+      // Index in keyword search (so merged facts appear in BM25 results)
+      if (isKeywordSearchAvailable()) {
+        indexMemory(mergedId, content, {
+          client_id: fact.client_id || clientId,
+          source_agent: 'consolidation-engine',
+          type: 'fact',
+        }).catch(e => console.error('[consolidation:keyword-index]', e.message));
+      }
+
+      // Write to structured DB (so merged facts appear in /memory/query)
+      if (isStoreAvailable()) {
+        upsertFact({
+          key: fact.key || contentHash,
+          value: content,
+          content,
+          source_agent: 'consolidation-engine',
+          client_id: fact.client_id || clientId,
+          category: 'semantic',
+          importance: sanitizeImportance(fact.importance),
+          knowledge_category: 'general',
+          content_hash: contentHash,
+          created_at: now,
+        }).catch(e => console.error('[consolidation:store-fact]', e.message));
+      }
+
       // Supersede source memories — the merged fact replaces them
       if (fact.source_memories?.length > 0) {
         for (const sourceId of fact.source_memories) {
@@ -377,14 +406,16 @@ async function consolidateBatch(points, clientId) {
     for (const contradiction of result.contradictions) {
       const content = `CONTRADICTION DETECTED: ${contradiction.description}. Suggested resolution: ${contradiction.suggested_resolution}`;
       const vector = await embed(content, 'store');
-      await upsertPoint(crypto.randomUUID(), vector, {
+      const contradictionId = crypto.randomUUID();
+      const contradictionHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+      await upsertPoint(contradictionId, vector, {
         text: content,
         type: 'event',
         source_agent: 'consolidation-engine',
         client_id: clientId,
         category: 'episodic',
         importance: 'high',
-        content_hash: crypto.createHash('sha256').update(content).digest('hex').slice(0, 16),
+        content_hash: contradictionHash,
         created_at: now,
         last_accessed_at: now,
         access_count: 0,
@@ -397,6 +428,21 @@ async function consolidateBatch(points, clientId) {
           memory_b: contradiction.memory_b,
         },
       });
+
+      // Index contradiction in keyword search + structured DB
+      if (isKeywordSearchAvailable()) {
+        indexMemory(contradictionId, content, {
+          client_id: clientId, source_agent: 'consolidation-engine', type: 'event',
+        }).catch(e => console.error('[consolidation:keyword-index]', e.message));
+      }
+      if (isStoreAvailable()) {
+        createEvent({
+          content, type: 'event', source_agent: 'consolidation-engine',
+          client_id: clientId, category: 'episodic', importance: 'high',
+          knowledge_category: 'general', content_hash: contradictionHash, created_at: now,
+        }).catch(e => console.error('[consolidation:store-event]', e.message));
+      }
+
       contradictions++;
     }
   }
@@ -533,31 +579,37 @@ const EVENT_TTL_DAYS = parseInt(process.env.EVENT_TTL_DAYS) || 30;
 async function cleanupOldEvents() {
   const cutoff = new Date(Date.now() - EVENT_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Scroll ALL events (paginated), then filter for old/unused/low-importance
-  const allEvents = [];
+  // Scroll events page-by-page, filtering and expiring in each page (no bulk load)
   let scrollOffset = null;
+  let totalExpired = 0;
+
   do {
-    const result = await scrollPoints({ type: 'event' }, 200, scrollOffset);
+    const result = await scrollPoints({ type: 'event', active: true }, 200, scrollOffset);
     const page = result.points || [];
-    allEvents.push(...page);
     scrollOffset = result.next_page_offset || null;
+
+    // Filter for old, unused, low-importance events within this page
+    const toExpire = page.filter(p => {
+      const pay = p.payload;
+      return (pay.access_count || 0) === 0 &&
+        pay.created_at && pay.created_at < cutoff &&
+        (pay.importance === 'medium' || pay.importance === 'low');
+    });
+
+    if (toExpire.length > 0) {
+      const ids = toExpire.map(p => p.id);
+      await updatePointPayload(ids, { active: false, expired_at: new Date().toISOString() });
+      totalExpired += ids.length;
+    }
+
+    // Safety cap: don't expire more than 500 in one run
+    if (totalExpired >= 500) break;
   } while (scrollOffset);
 
-  const points = allEvents.filter(p => {
-    const pay = p.payload;
-    return pay.active === true &&
-      pay.access_count === 0 &&
-      pay.created_at < cutoff &&
-      (pay.importance === 'medium' || pay.importance === 'low');
-  });
-
-  if (points.length === 0) return 0;
-
-  // Mark as inactive (soft delete) rather than hard delete
-  const ids = points.map(p => p.id);
-  await updatePointPayload(ids, { active: false, expired_at: new Date().toISOString() });
-  console.log(`[consolidation] Expired ${ids.length} old events (>${EVENT_TTL_DAYS} days, never accessed, medium/low importance)`);
-  return ids.length;
+  if (totalExpired > 0) {
+    console.log(`[consolidation] Expired ${totalExpired} old events (>${EVENT_TTL_DAYS} days, never accessed, medium/low importance)`);
+  }
+  return totalExpired;
 }
 
 export function startConsolidationJob() {
