@@ -216,6 +216,126 @@ entitiesRouter.get('/:name', async (req, res) => {
   }
 });
 
+// DELETE /entities/:name — Delete an entity and its links
+entitiesRouter.delete('/:name', async (req, res) => {
+  try {
+    if (!isEntityStoreAvailable()) {
+      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+    }
+
+    const entity = await findEntity(req.params.name);
+    if (!entity) {
+      return res.status(404).json({ error: 'Entity not found' });
+    }
+
+    const store = _getStoreInstance();
+    if (!store?.pool && !store?.db) {
+      return res.status(500).json({ error: 'No writable store available' });
+    }
+
+    // CASCADE handles entity_memory_links and entity_aliases
+    if (store.pool) {
+      await store.pool.query('DELETE FROM entities WHERE id = $1', [entity.id]);
+    } else if (store.db) {
+      store.db.prepare('DELETE FROM entities WHERE id = @id').run({ id: entity.id });
+    }
+
+    console.log(`[entities:delete] Entity "${entity.canonical_name}" (${entity.entity_type}) deleted`);
+
+    res.json({
+      deleted: true,
+      name: entity.canonical_name,
+      type: entity.entity_type,
+      id: entity.id,
+    });
+  } catch (err) {
+    console.error('[entities:delete]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /entities/:name/merge — Merge another entity into this one
+entitiesRouter.post('/:name/merge', async (req, res) => {
+  try {
+    if (!isEntityStoreAvailable()) {
+      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+    }
+
+    const { merge_from } = req.body;
+    if (!merge_from) {
+      return res.status(400).json({ error: 'merge_from is required (entity name to merge into this one)' });
+    }
+
+    const primary = await findEntity(req.params.name);
+    if (!primary) {
+      return res.status(404).json({ error: `Primary entity "${req.params.name}" not found` });
+    }
+
+    const secondary = await findEntity(merge_from);
+    if (!secondary) {
+      return res.status(404).json({ error: `Source entity "${merge_from}" not found` });
+    }
+
+    const store = _getStoreInstance();
+    if (!store?.pool) {
+      return res.status(500).json({ error: 'Merge requires postgres backend' });
+    }
+
+    // Move memory links from secondary to primary (skip conflicts)
+    const moveResult = await store.pool.query(`
+      UPDATE entity_memory_links SET entity_id = $1
+      WHERE entity_id = $2
+      AND NOT EXISTS (
+        SELECT 1 FROM entity_memory_links existing
+        WHERE existing.entity_id = $1
+        AND existing.memory_id = entity_memory_links.memory_id
+        AND existing.role = entity_memory_links.role
+      )
+    `, [primary.id, secondary.id]);
+    const movedLinks = moveResult.rowCount || 0;
+
+    // Move relationships from secondary to primary
+    await store.pool.query(`
+      UPDATE entity_relationships SET source_entity_id = $1
+      WHERE source_entity_id = $2
+      AND target_entity_id != $1
+    `, [primary.id, secondary.id]).catch(() => {});
+    await store.pool.query(`
+      UPDATE entity_relationships SET target_entity_id = $1
+      WHERE target_entity_id = $2
+      AND source_entity_id != $1
+    `, [primary.id, secondary.id]).catch(() => {});
+
+    // Create alias from secondary name
+    await store.pool.query(
+      `INSERT INTO entity_aliases (entity_id, alias, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+      [primary.id, secondary.canonical_name]
+    );
+
+    // Update mention count on primary
+    await store.pool.query(
+      'UPDATE entities SET mention_count = mention_count + $1 WHERE id = $2',
+      [secondary.mention_count || 0, primary.id]
+    );
+
+    // Delete secondary (CASCADE removes remaining links/aliases)
+    await store.pool.query('DELETE FROM entities WHERE id = $1', [secondary.id]);
+
+    console.log(`[entities:merge] Merged "${secondary.canonical_name}" → "${primary.canonical_name}" (${movedLinks} links moved)`);
+
+    res.json({
+      merged: true,
+      primary: primary.canonical_name,
+      absorbed: secondary.canonical_name,
+      links_moved: movedLinks,
+      alias_created: secondary.canonical_name,
+    });
+  } catch (err) {
+    console.error('[entities:merge]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /entities/:name/memories — All memories linked to an entity
 entitiesRouter.get('/:name/memories', async (req, res) => {
   try {

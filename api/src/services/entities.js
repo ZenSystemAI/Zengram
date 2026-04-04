@@ -210,11 +210,33 @@ function isJunkPhrase(phrase) {
   ]);
   if (words.length === 2 && GENERIC_HEAD.has(words[0])) return true;
 
-  // Skip phrases that are too long (5+ words are almost always prose)
-  if (words.length >= 5) return true;
+  // Skip phrases that are too long (4+ words are almost always prose)
+  if (words.length >= 4) return true;
 
   // Skip phrases containing lowercase connecting words (likely prose)
   if (words.some(w => /^(and|or|the|a|an|of|in|on|at|to|for|with|by|from|is|are|was|not|but)$/i.test(w) && w[0] === w[0].toLowerCase())) return true;
+
+  // Skip phrases containing digits (version numbers, counts, specs)
+  if (/\d/.test(phrase)) return true;
+
+  // Skip phrases where any word is a common English verb (imperative/past tense)
+  const VERB_WORDS = new Set([
+    'Added', 'Used', 'Made', 'Found', 'Tried', 'Called', 'Noted', 'Shown',
+    'Sent', 'Done', 'Gone', 'Kept', 'Took', 'Gave', 'Told', 'Came',
+    'Known', 'Seen', 'Named', 'Based', 'Needed', 'Wanted', 'Looked',
+    'Logged', 'Stored', 'Built', 'Loaded', 'Tagged', 'Linked', 'Mapped',
+    'Listed', 'Parsed', 'Wired', 'Piped', 'Typed', 'Keyed', 'Tuned',
+    'Stripped', 'Trusted', 'Gathered', 'Identified', 'Exposed', 'Persisted',
+    'Replaced', 'Recovered', 'Addressed', 'Requested', 'Suggested',
+    'Required', 'Expected', 'Proposed', 'Described', 'Processed',
+  ]);
+  if (words.some(w => VERB_WORDS.has(w))) return true;
+
+  // Skip 3-word phrases where middle word is a generic connector
+  if (words.length === 3) {
+    const MID_CONNECTORS = new Set(['And', 'Or', 'For', 'Via', 'With', 'From', 'Into', 'Over']);
+    if (MID_CONNECTORS.has(words[1])) return true;
+  }
 
   return false;
 }
@@ -294,6 +316,16 @@ function isJunkQuotedName(name) {
 
   // Single lowercase word (not a known entity)
   if (words.length === 1 && /^[a-z]/.test(name)) return true;
+
+  // Quoted names longer than 8 words are always prose
+  if (words.length > 8) return true;
+
+  // Quoted names with common sentence starters
+  const SENTENCE_STARTERS = new Set([
+    'I', 'We', 'You', 'He', 'She', 'It', 'They', 'There', 'Here',
+    'Steven', 'Agent', 'Client', 'Server', 'System', 'Memory', 'Brain',
+  ]);
+  if (words.length >= 3 && SENTENCE_STARTERS.has(words[0])) return true;
 
   return false;
 }

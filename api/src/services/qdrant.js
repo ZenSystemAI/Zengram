@@ -91,7 +91,7 @@ export async function initQdrant() {
   for (const field of keywordFields) {
     await qdrantRequest(`/collections/${COLLECTION}/index`, {
       method: 'PUT',
-      body: JSON.stringify({ field_name: field, field_schema: 'Keyword' }),
+      body: JSON.stringify({ field_name: field, field_schema: 'keyword' }),
     });
   }
 
@@ -134,8 +134,8 @@ export async function initQdrant() {
 export async function ensureEntityIndex() {
   const indexes = [
     { field_name: 'entities[].name', field_schema: 'keyword' },
-    { field_name: 'key', field_schema: 'Keyword' },
-    { field_name: 'subject', field_schema: 'Keyword' },
+    { field_name: 'key', field_schema: 'keyword' },
+    { field_name: 'subject', field_schema: 'keyword' },
   ];
   for (const idx of indexes) {
     try {
@@ -431,7 +431,7 @@ export async function createQdrantCollection(collectionName) {
   const keywordFields = ['type', 'source_agent', 'client_id', 'category', 'importance', 'content_hash', 'key', 'subject', 'knowledge_category'];
   for (const field of keywordFields) {
     await qdrantRequest(`/collections/${collectionName}/index`, {
-      method: 'PUT', body: JSON.stringify({ field_name: field, field_schema: 'Keyword' }),
+      method: 'PUT', body: JSON.stringify({ field_name: field, field_schema: 'keyword' }),
     });
   }
   await qdrantRequest(`/collections/${collectionName}/index`, { method: 'PUT', body: JSON.stringify({ field_name: 'active', field_schema: 'Bool' }) });

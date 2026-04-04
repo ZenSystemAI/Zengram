@@ -22,8 +22,11 @@ export class GeminiProvider {
         ],
         generationConfig: {
           temperature: options.temperature || 0.3,
-          maxOutputTokens: options.max_tokens || 4096,
+          maxOutputTokens: options.max_tokens || 65536,
           responseMimeType: 'application/json',
+          // Gemini 2.5 Flash thinking tokens count against maxOutputTokens.
+          // Cap thinking to preserve budget for the actual JSON response.
+          thinkingConfig: { thinkingBudget: options.thinking_budget || 8192 },
         },
       }),
     }, 120000);
@@ -34,6 +37,17 @@ export class GeminiProvider {
     }
 
     const data = await response.json();
-    return data.candidates[0].content.parts[0].text;
+    const candidate = data.candidates[0];
+
+    // Check for truncation — Gemini returns MAX_TOKENS when thinking + output exceeds budget
+    if (candidate.finishReason === 'MAX_TOKENS') {
+      const meta = data.usageMetadata || {};
+      console.warn(`[gemini] Response truncated: thinking=${meta.thoughtsTokenCount || '?'}, output=${meta.candidatesTokenCount || '?'}, limit=${options.max_tokens || 65536}`);
+    }
+
+    // Take the last non-thinking part (thinking parts have thought:true)
+    const parts = candidate.content.parts;
+    const outputPart = parts.findLast(p => !p.thought) || parts[parts.length - 1];
+    return outputPart.text;
   }
 }

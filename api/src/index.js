@@ -15,6 +15,7 @@ import { reflectRouter } from './routes/reflect.js';
 import { subscribeRouter } from './routes/subscribe.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { collectionsRouter } from './routes/collections.js';
+import { reconcileRouter } from './routes/reconcile.js';
 import { initQdrant, ensureEntityIndex } from './services/qdrant.js';
 import { initEmbeddings } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance, getBackendType } from './services/stores/interface.js';
@@ -72,6 +73,7 @@ app.use('/graph', graphRouter);
 app.use('/reflect', reflectRouter);
 app.use('/subscribe', subscribeRouter);
 app.use('/collections', collectionsRouter);
+app.use('/reconcile', reconcileRouter);
 
 async function start() {
   try {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Shared Brain — Dashboard</title>
+<title>Zengram — Dashboard</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -322,7 +322,7 @@ select.input { appearance: none; cursor: pointer; padding-right: 32px;
 <!-- Login Modal -->
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
-    <h2>Shared Brain</h2>
+    <h2>Zengram</h2>
     <p>Enter your API key to access the dashboard.</p>
     <div class="login-error" id="loginError">Invalid API key. Check your .env file.</div>
     <input type="password" id="loginKeyInput" placeholder="API key" autocomplete="off" autofocus>
@@ -335,7 +335,7 @@ select.input { appearance: none; cursor: pointer; padding-right: 32px;
   <!-- Sidebar -->
   <nav class="sidebar">
     <div class="sidebar-brand">
-      <h1>Shared Brain</h1>
+      <h1>Zengram</h1>
       <span>Memory Dashboard</span>
     </div>
     <div class="sidebar-nav">
@@ -446,7 +446,7 @@ function connectSSE() {
   try {
     // SSE needs auth via query param or custom header — EventSource doesn't support headers.
     // We'll use fetch-based SSE reader instead.
-    sseSource = new EventSource(`/subscribe?events=memory:stored,memory:superseded,memory:deleted`);
+    sseSource = new EventSource(`/subscribe?events=memory:stored,memory:superseded,memory:deleted&key=${encodeURIComponent(API.key)}`);
     // EventSource can't set headers, so SSE endpoint needs to accept unauthenticated OR
     // we skip SSE if auth is required. For now, attempt connection.
     sseSource.onopen = () => {
@@ -747,7 +747,7 @@ async function loadEntities() {
   `;
   try {
     const data = await API.get('/entities?limit=500');
-    allEntities = data.results || [];
+    allEntities = data.entities || data.results || [];
 
     // Build type tabs
     const types = {};
@@ -808,10 +808,10 @@ function loadGraph() {
   main.innerHTML = `
     <div class="main-header">
       <h2>Knowledge Graph</h2>
-      <button class="btn btn-primary" onclick="window.open('/graph/full/html','_blank')">Open Full Graph</button>
+      <button class="btn btn-primary" onclick="window.open('/graph/full/html?key='+encodeURIComponent(API.key),'_blank')">Open Full Graph</button>
     </div>
     <div class="card" style="height:calc(100vh - 140px);padding:0;overflow:hidden">
-      <iframe src="/graph/full/html" style="width:100%;height:100%;border:none;border-radius:12px" loading="lazy"></iframe>
+      <iframe src="/graph/full/html?key=${encodeURIComponent(API.key)}" style="width:100%;height:100%;border:none;border-radius:12px" loading="lazy"></iframe>
     </div>
   `;
 }
@@ -825,7 +825,7 @@ async function loadClients() {
   try {
     // Get unique client_ids from entity list (type=client) or stats
     const entityData = await API.get('/entities?type=client&limit=100');
-    const clientEntities = entityData.results || [];
+    const clientEntities = entityData.entities || entityData.results || [];
 
     // Also try to get clients from stats (unique client_ids in memories)
     const container = document.getElementById('clientContent');

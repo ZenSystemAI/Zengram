@@ -454,6 +454,17 @@ memoryRouter.get('/search', async (req, res) => {
       finalResults = vectorResults.slice(0, maxResults);
     }
 
+    // Post-filter for temporal validity (at_time) — applies to ALL search paths
+    // Vector search already filters via Qdrant range query, but keyword/graph results bypass it
+    if (at_time) {
+      finalResults = finalResults.filter(r => {
+        const p = r.payload;
+        if (p.valid_from && p.valid_from > at_time) return false; // not yet valid
+        if (p.valid_to && p.valid_to <= at_time) return false;    // already expired
+        return true;
+      });
+    }
+
     // Apply confidence decay + access-weighted ranking + temporal boost
     const COMPACT_MAX = 200;
     const refDateForBoost = reference_date || at_time || null;
@@ -665,10 +676,10 @@ memoryRouter.get('/query', async (req, res) => {
       });
     }
 
-    const { type, source_agent, category, client_id, since, key, subject } = req.query;
+    const { type, source_agent, category, client_id, since, key, subject, limit } = req.query;
 
     let results;
-    const filters = { source_agent, category, client_id };
+    const filters = { source_agent, category, client_id, limit };
 
     if (type === 'fact' || type === 'facts') {
       if (key) filters.key = key;

@@ -90,16 +90,25 @@ clientRouter.get('/:clientId', async (req, res) => {
     // --- Briefing mode ---
     const knowledge = {};
 
-    const categoryResults = await Promise.all(KNOWLEDGE_CATEGORIES.map(cat => {
+    // Query each named category + a "general" catch-all for uncategorized memories
+    const allCategories = [...KNOWLEDGE_CATEGORIES, 'general'];
+    const categoryResults = await Promise.all(allCategories.map(cat => {
       const scrollFilter = {
         client_id: effectiveClientId,
         active: true,
-        knowledge_category: cat,
       };
-      return scrollPoints(scrollFilter, SCROLL_LIMIT).then(r => ({ cat, points: r.points || [] }));
+      if (cat !== 'general') {
+        scrollFilter.knowledge_category = cat;
+      }
+      // For 'general': no knowledge_category filter — gets all memories for this client
+      return scrollPoints(scrollFilter, cat === 'general' ? 50 : SCROLL_LIMIT).then(r => ({ cat, points: r.points || [] }));
     }));
 
+    // Collect IDs from categorized results to exclude from general
+    const categorizedIds = new Set();
+
     for (const { cat, points } of categoryResults) {
+      if (cat === 'general') continue; // process general last
       // Sort by created_at descending (Qdrant scroll doesn't sort by payload)
       points.sort((a, b) => {
         const dateA = a.payload?.created_at || '';
@@ -111,6 +120,7 @@ clientRouter.get('/:clientId', async (req, res) => {
       const topPoints = points.slice(0, BRIEFING_PER_CATEGORY);
 
       knowledge[cat] = topPoints.map(p => {
+        categorizedIds.add(p.id);
         const payload = p.payload;
         const text = payload.text || '';
         if (isCompact) {
@@ -123,6 +133,37 @@ clientRouter.get('/:clientId', async (req, res) => {
           };
         }
 
+        return {
+          id: p.id,
+          type: payload.type,
+          content: text,
+          source_agent: payload.source_agent,
+          importance: payload.importance,
+          created_at: payload.created_at,
+          metadata: payload.metadata || null,
+        };
+      });
+    }
+
+    // Process "general" — uncategorized memories not already in a named category
+    const generalResult = categoryResults.find(r => r.cat === 'general');
+    if (generalResult) {
+      const uncategorized = generalResult.points.filter(p => !categorizedIds.has(p.id));
+      uncategorized.sort((a, b) => (b.payload?.created_at || '').localeCompare(a.payload?.created_at || ''));
+      const topGeneral = uncategorized.slice(0, SCROLL_LIMIT);
+
+      knowledge.general = topGeneral.map(p => {
+        const payload = p.payload;
+        const text = payload.text || '';
+        if (isCompact) {
+          return {
+            id: p.id,
+            type: payload.type,
+            content: text.length > COMPACT_MAX ? text.slice(0, COMPACT_MAX) + '...' : text,
+            source_agent: payload.source_agent,
+            created_at: payload.created_at,
+          };
+        }
         return {
           id: p.id,
           type: payload.type,

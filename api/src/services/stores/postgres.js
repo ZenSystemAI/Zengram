@@ -182,7 +182,9 @@ export class PostgresStore {
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.since) { sql += ` AND created_at >= $${i++}`; params.push(filters.since); }
 
-    sql += ' ORDER BY created_at DESC LIMIT 50';
+    const limit = Math.min(parseInt(filters.limit) || 50, 500);
+    sql += ` ORDER BY created_at DESC LIMIT $${i++}`;
+    params.push(limit);
     const result = await this.pool.query(sql, params);
     return { results: result.rows };
   }
@@ -214,7 +216,9 @@ export class PostgresStore {
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.key) { sql += ` AND key ILIKE $${i++}`; params.push(`%${filters.key}%`); }
 
-    sql += ' ORDER BY updated_at DESC LIMIT 50';
+    const limit = Math.min(parseInt(filters.limit) || 50, 500);
+    sql += ` ORDER BY updated_at DESC LIMIT $${i++}`;
+    params.push(limit);
     const result = await this.pool.query(sql, params);
     return { results: result.rows };
   }
@@ -246,7 +250,9 @@ export class PostgresStore {
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.subject) { sql += ` AND subject ILIKE $${i++}`; params.push(`%${filters.subject}%`); }
 
-    sql += ' ORDER BY updated_at DESC LIMIT 50';
+    const limit = Math.min(parseInt(filters.limit) || 50, 500);
+    sql += ` ORDER BY updated_at DESC LIMIT $${i++}`;
+    params.push(limit);
     const result = await this.pool.query(sql, params);
     return { results: result.rows };
   }
