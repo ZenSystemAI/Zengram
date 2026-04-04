@@ -5,3 +5,8 @@ node_modules/
 data/
 tmp/
 .claude/
+
+# Session artifacts
+AUDIT-*.md
+*-plan.md
+superpowers-*
