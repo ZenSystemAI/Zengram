@@ -10,3 +10,11 @@ tmp/
 AUDIT-*.md
 *-plan.md
 superpowers-*
+
+# Internal data — never commit
+backups/
+scripts/
+docs/superpowers/
+Notebooklm/
+Gemini Images/
+dashboard-*.png
