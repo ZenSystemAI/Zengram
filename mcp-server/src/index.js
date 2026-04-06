@@ -138,8 +138,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           format: {
             type: 'string',
-            enum: ['compact', 'full'],
-            description: 'compact (default): truncated to 200 chars, essential fields only. full: complete content + all metadata.',
+            enum: ['compact', 'full', 'index'],
+            description: 'compact (default): truncated to 200 chars, essential fields only. full: complete content + all metadata. index: minimal tokens — ID + 80-char summary + score + type only (for progressive disclosure, fetch full content in a second call).',
           },
           include_superseded: {
             type: 'boolean',

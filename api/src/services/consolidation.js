@@ -4,7 +4,7 @@ import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoi
 import { embed } from './embedders/interface.js';
 import {
   isEntityStoreAvailable, isStoreAvailable, createEntity, findEntity, linkEntityToMemory,
-  upsertAlias, loadAllAliases, createRelationship, createEvent, upsertFact,
+  upsertAlias, loadAllAliases,
 } from './stores/interface.js';
 import { isKeywordSearchAvailable, indexMemory } from './keyword-search.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
@@ -47,26 +47,19 @@ Analyze the following memories and produce a JSON response with these fields:
       "relationship": "Description of how these memories are related"
     }
   ],
-  "insights": [],
-  "entities": [
+  "compressed_summaries": [
     {
-      "canonical_name": "The standard/official name for this entity",
-      "type": "client|person|system|service|domain|technology|workflow|agent",
-      "aliases": ["other-name", "abbreviation", "slug"],
-      "mentioned_in": ["memory-id-1", "memory-id-2"]
+      "content": "A compressed 2-3 sentence summary of this group of related memories",
+      "source_memories": ["id1", "id2", "id3"],
+      "key": "unique-key-for-summary",
+      "client_id": "global or client slug",
+      "importance": "critical|high|medium|low"
     }
   ],
   "knowledge_categories": [
     {
       "memory_id": "id of memory to reclassify",
       "suggested_category": "brand|strategy|meeting|content|technical|relationship|general"
-    }
-  ],
-  "entity_relationship_types": [
-    {
-      "source_entity": "canonical name of first entity",
-      "target_entity": "canonical name of second entity",
-      "relationship_type": "contact_of|same_owner|uses|works_on|competitor_of|co_occurrence"
     }
   ]
 }
@@ -75,20 +68,14 @@ Rules:
 - Only create merged_facts when 2+ memories say essentially the same thing
 - Only flag contradictions when memories genuinely conflict (not just different aspects)
 - Connections should be meaningful, not trivial (e.g., same client mentioned)
-- insights: ALWAYS return an empty array. Do NOT generate insights — they create noise.
-- If no merges/contradictions/connections/insights found, return empty arrays
+- compressed_summaries: For groups of 3+ events describing the same session or topic, produce a compressed summary (2-3 sentences max). This replaces verbose session logs with concise facts.
+- Do NOT extract or discover entities — entity extraction is handled separately at write time.
+- insights: ALWAYS return an empty array. Do NOT generate insights.
+- entities: ALWAYS return an empty array. Entity extraction happens at write time, not consolidation.
+- entity_relationship_types: ALWAYS return an empty array. Relationships are inferred from co-occurrence at write time.
+- If no merges/contradictions/connections/compressed_summaries found, return empty arrays
 - Preserve client_id from source memories
-- Extract ALL named entities: client names, people, systems, services, domains, technologies, workflows, agent names
-- For each entity, choose the most official/complete form as canonical_name (e.g. "Acme Corporation" not "acme")
-- List ALL variant spellings/references as aliases (include slugs, abbreviations, informal names)
-- type must be one of: client, person, system, service, domain, technology, workflow, agent
-- mentioned_in must only contain memory IDs from the batch being analyzed
-- If an entity appears in source_agent fields, its type is "agent"
-- If an entity appears in client_id fields, its type is "client"
-- Domain names (*.com, *.ca, etc.) have type "domain"
-- Tools and software have type "technology"
 - For each memory, suggest the most appropriate knowledge_category from: brand, strategy, meeting, content, technical, relationship, general. Consider: brand=voice/identity/guidelines, strategy=plans/positioning/campaigns, meeting=call notes/action items, content=published work/performance, technical=hosting/CMS/SEO issues, relationship=contacts/preferences. Only include a memory in knowledge_categories if you are suggesting a category different from its current knowledge_category attribute (or if the current one is null/general and a more specific one fits).
-- For pairs of entities that frequently appear together in the memories, suggest a relationship type from: contact_of, same_owner, uses, works_on, competitor_of, co_occurrence. Only suggest relationships when the memory content makes the relationship clear.
 
 MEMORIES TO ANALYZE:
 `;
@@ -129,11 +116,9 @@ export async function runConsolidation() {
     let totalMerged = 0;
     let totalContradictions = 0;
     let totalConnections = 0;
-    let totalInsights = 0;
+    let totalCompressedSummaries = 0;
     let totalSkipped = 0;
-    let totalEntities = 0;
     let totalCategoriesUpdated = 0;
-    let totalRelationshipsCreated = 0;
     const errors = [];
 
     for (const [clientId, groupPoints] of Object.entries(groups)) {
@@ -146,11 +131,9 @@ export async function runConsolidation() {
           totalMerged += result.merged;
           totalContradictions += result.contradictions;
           totalConnections += result.connections;
-          totalInsights += result.insights;
+          totalCompressedSummaries += result.compressed_summaries || 0;
           totalSkipped += result.skipped || 0;
-          totalEntities += result.entities || 0;
           totalCategoriesUpdated += result.categories_updated || 0;
-          totalRelationshipsCreated += result.relationships_created || 0;
 
           // Mark batch as consolidated
           const ids = batch.map(p => p.id);
@@ -173,11 +156,9 @@ export async function runConsolidation() {
       merged_facts: totalMerged,
       contradictions_found: totalContradictions,
       connections_found: totalConnections,
-      insights_generated: totalInsights,
+      compressed_summaries: totalCompressedSummaries,
       skipped_dedup: totalSkipped,
-      entities_processed: totalEntities,
       categories_updated: totalCategoriesUpdated,
-      relationships_created: totalRelationshipsCreated,
       errors: errors.length > 0 ? errors : undefined,
       duration_ms: duration,
       llm: getLLMInfo(),
@@ -202,7 +183,7 @@ export async function runConsolidation() {
     }
     summary.events_expired = eventsExpired;
 
-    console.log(`[consolidation] Complete: ${points.length} memories, ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalInsights} insights, ${totalSkipped} skipped (dedup), ${totalEntities} entities, ${totalCategoriesUpdated} categories updated, ${totalRelationshipsCreated} relationships, ${eventsExpired} events expired`);
+    console.log(`[consolidation] Complete: ${points.length} memories, ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalCompressedSummaries} compressed summaries, ${totalSkipped} skipped (dedup), ${totalCategoriesUpdated} categories updated, ${eventsExpired} events expired`);
 
     return summary;
   } catch (err) {
@@ -244,13 +225,13 @@ async function consolidateBatch(points, clientId) {
     result = JSON.parse(jsonText);
   } catch (e) {
     console.error('[consolidation] LLM returned invalid JSON:', responseText.slice(0, 300));
-    return { merged: 0, contradictions: 0, connections: 0, insights: 0 };
+    return { merged: 0, contradictions: 0, connections: 0, compressed_summaries: 0 };
   }
 
   // Validate top-level structure
   if (typeof result !== 'object' || result === null || Array.isArray(result)) {
     console.error('[consolidation] LLM returned non-object JSON');
-    return { merged: 0, contradictions: 0, connections: 0, insights: 0 };
+    return { merged: 0, contradictions: 0, connections: 0, compressed_summaries: 0 };
   }
 
   // Validate: strip any memory IDs not in the current batch
@@ -274,19 +255,13 @@ async function consolidateBatch(points, clientId) {
     }
     result.connections = result.connections.filter(c => c.memories && c.memories.length >= 2);
   }
-  if (result.insights) {
-    for (const insight of result.insights) {
-      if (insight.source_memories) {
-        insight.source_memories = insight.source_memories.filter(id => batchIds.has(id));
+  if (result.compressed_summaries) {
+    for (const summary of result.compressed_summaries) {
+      if (summary.source_memories) {
+        summary.source_memories = summary.source_memories.filter(id => batchIds.has(id));
       }
     }
-  }
-  if (result.entities) {
-    for (const ent of result.entities) {
-      if (ent.mentioned_in) {
-        ent.mentioned_in = ent.mentioned_in.filter(id => batchIds.has(id));
-      }
-    }
+    result.compressed_summaries = result.compressed_summaries.filter(s => s.source_memories && s.source_memories.length >= 3);
   }
   // Validate knowledge_categories: only accept entries with valid memory IDs and valid categories
   const VALID_KNOWLEDGE_CATEGORIES = ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'];
@@ -296,20 +271,12 @@ async function consolidateBatch(points, clientId) {
       kc.suggested_category && VALID_KNOWLEDGE_CATEGORIES.includes(kc.suggested_category)
     );
   }
-  // Validate entity_relationship_types: only accept entries with valid relationship types
-  const VALID_RELATIONSHIP_TYPES = ['contact_of', 'same_owner', 'uses', 'works_on', 'competitor_of', 'co_occurrence'];
-  if (result.entity_relationship_types) {
-    result.entity_relationship_types = result.entity_relationship_types.filter(ert =>
-      ert.source_entity && ert.target_entity && ert.relationship_type &&
-      VALID_RELATIONSHIP_TYPES.includes(ert.relationship_type)
-    );
-  }
 
   const VALID_IMPORTANCE = ['critical', 'high', 'medium', 'low'];
   const sanitizeImportance = (val) => VALID_IMPORTANCE.includes(val) ? val : 'medium';
 
   const now = new Date().toISOString();
-  let merged = 0, contradictions = 0, connections = 0, insights = 0;
+  let merged = 0, contradictions = 0, connections = 0, compressedSummaries = 0;
 
   // Store merged facts as new memories (with dedup)
   let skipped = 0;
@@ -364,6 +331,7 @@ async function consolidateBatch(points, clientId) {
 
       // Write to structured DB (so merged facts appear in /memory/query)
       if (isStoreAvailable()) {
+        const { upsertFact } = await import('./stores/interface.js');
         upsertFact({
           key: fact.key || contentHash,
           value: content,
@@ -436,6 +404,7 @@ async function consolidateBatch(points, clientId) {
         }).catch(e => console.error('[consolidation:keyword-index]', e.message));
       }
       if (isStoreAvailable()) {
+        const { createEvent } = await import('./stores/interface.js');
         createEvent({
           content, type: 'event', source_agent: 'consolidation-engine',
           client_id: clientId, category: 'episodic', importance: 'high',
@@ -464,61 +433,88 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Insights DISABLED (2026-03-19): LLM-generated insights about memory content
-  // are a noise factory. They produce generic observations that compete with source
-  // memories in search results. Real insights come from agents doing actual work.
-  // The consolidation engine should merge, connect, and extract entities — not philosophize.
-  if (result.insights?.length > 0) {
-    console.log(`[consolidation] Skipped ${result.insights.length} insights (generation disabled)`);
-  }
+  // Store compressed summaries as new fact-type memories (without superseding source memories)
+  if (result.compressed_summaries?.length > 0) {
+    for (const summary of result.compressed_summaries) {
+      const content = summary.content;
+      const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 
-  // Process entities discovered by the LLM
-  let entitiesProcessed = 0;
-  if (result.entities?.length > 0 && isEntityStoreAvailable()) {
-    for (const ent of result.entities) {
-      try {
-        // Normalize: trim whitespace, collapse internal spaces
-        const canonicalName = (ent.canonical_name || '').trim().replace(/\s+/g, ' ');
-        if (!canonicalName || canonicalName.length < 2) continue;
-
-        const entityType = ent.type || 'system';
-
-        // Find or create the entity (findEntity already does case-insensitive lookup)
-        let entity = await findEntity(canonicalName);
-        let entityId;
-        if (entity) {
-          entityId = entity.id;
-          // Bump mention count
-          await createEntity({ canonical_name: entity.canonical_name, entity_type: entityType });
-        } else {
-          const created = await createEntity({ canonical_name: canonicalName, entity_type: entityType });
-          entityId = created.id;
-          addToAliasCache(canonicalName, entityId, canonicalName, entityType);
-        }
-
-        // Register aliases (normalized)
-        if (ent.aliases && entityId) {
-          for (const rawAlias of ent.aliases) {
-            const alias = (rawAlias || '').trim().replace(/\s+/g, ' ');
-            if (!alias || alias.length < 2) continue;
-            const aliasResult = await upsertAlias(entityId, alias);
-            if (aliasResult.created) {
-              addToAliasCache(alias, entityId, canonicalName, entityType);
-            }
-          }
-        }
-
-        // Link to mentioned memories
-        if (ent.mentioned_in && entityId) {
-          for (const memId of ent.mentioned_in) {
-            await linkEntityToMemory(entityId, memId, 'mentioned');
-          }
-        }
-
-        entitiesProcessed++;
-      } catch (e) {
-        console.error(`[consolidation] Entity processing failed for "${ent.canonical_name}":`, e.message);
+      // Exact dedup: skip if identical content already exists
+      const existing = await findByPayload('content_hash', contentHash, { active: true });
+      if (existing.length > 0) {
+        skipped++;
+        continue;
       }
+
+      const vector = await embed(content, 'store');
+
+      // Semantic dedup: skip if a very similar memory already exists
+      const similar = await searchPoints(vector, { active: true }, 1);
+      if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) {
+        skipped++;
+        continue;
+      }
+
+      const summaryId = crypto.randomUUID();
+      await upsertPoint(summaryId, vector, {
+        text: content,
+        type: 'fact',
+        source_agent: 'consolidation-engine',
+        client_id: summary.client_id || clientId,
+        category: 'semantic',
+        importance: sanitizeImportance(summary.importance),
+        key: summary.key || contentHash,
+        content_hash: contentHash,
+        created_at: now,
+        last_accessed_at: now,
+        access_count: 0,
+        confidence: 1.0,
+        active: true,
+        consolidated: true,
+        metadata: { source_memories: summary.source_memories, consolidation_type: 'compressed_summary' },
+      });
+
+      // Index in keyword search
+      if (isKeywordSearchAvailable()) {
+        indexMemory(summaryId, content, {
+          client_id: summary.client_id || clientId,
+          source_agent: 'consolidation-engine',
+          type: 'fact',
+        }).catch(e => console.error('[consolidation:keyword-index]', e.message));
+      }
+
+      // Write to structured DB
+      if (isStoreAvailable()) {
+        const { upsertFact } = await import('./stores/interface.js');
+        upsertFact({
+          key: summary.key || contentHash,
+          value: content,
+          content,
+          source_agent: 'consolidation-engine',
+          client_id: summary.client_id || clientId,
+          category: 'semantic',
+          importance: sanitizeImportance(summary.importance),
+          knowledge_category: 'general',
+          content_hash: contentHash,
+          created_at: now,
+        }).catch(e => console.error('[consolidation:store-fact]', e.message));
+      }
+
+      // Mark source memories as consolidated (but don't supersede them)
+      if (summary.source_memories?.length > 0) {
+        for (const sourceId of summary.source_memories) {
+          try {
+            await updatePointPayload(sourceId, {
+              consolidated: true,
+              consolidated_at: now,
+            });
+          } catch (e) {
+            // Source memory might not exist — skip
+          }
+        }
+      }
+
+      compressedSummaries++;
     }
   }
 
@@ -545,32 +541,9 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Create entity relationships based on LLM-suggested types
-  let relationshipsCreated = 0;
-  if (result.entity_relationship_types?.length > 0 && isEntityStoreAvailable()) {
-    for (const ert of result.entity_relationship_types) {
-      try {
-        const sourceEntity = await findEntity(ert.source_entity);
-        const targetEntity = await findEntity(ert.target_entity);
-
-        if (sourceEntity && targetEntity && sourceEntity.id !== targetEntity.id) {
-          await createRelationship(sourceEntity.id, targetEntity.id, ert.relationship_type);
-          relationshipsCreated++;
-        }
-      } catch (e) {
-        console.error(`[consolidation] Relationship creation failed for "${ert.source_entity}" -> "${ert.target_entity}":`, e.message);
-      }
-    }
-    if (relationshipsCreated > 0) {
-      console.log(`[consolidation] Created/updated ${relationshipsCreated} entity relationships`);
-    }
-  }
-
   return {
-    merged, contradictions, connections, insights, skipped,
-    entities: entitiesProcessed,
+    merged, contradictions, connections, compressed_summaries: compressedSummaries, skipped,
     categories_updated: categoriesUpdated,
-    relationships_created: relationshipsCreated,
   };
 }
 
