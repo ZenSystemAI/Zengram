@@ -1,0 +1,50 @@
+{
+  "name": "@zensystemai/zengram-sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for Zengram multi-agent memory system",
+  "license": "MIT",
+  "author": "ZenSystem AI",
+  "homepage": "https://github.com/ZenSystemAI/zengram",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZenSystemAI/zengram.git",
+    "directory": "sdk/typescript"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run lint"
+  },
+  "keywords": [
+    "zengram",
+    "memory",
+    "ai",
+    "multi-agent",
+    "shared-brain",
+    "semantic-search"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@vitest/ui": "^1.1.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  }
+}
