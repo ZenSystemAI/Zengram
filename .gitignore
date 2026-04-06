@@ -18,3 +18,9 @@ docs/superpowers/
 Notebooklm/
 Gemini Images/
 dashboard-*.png
+.gitnexus
+
+# Agent artifacts (internal, never commit to public repo)
+AGENTS.md
+CLAUDE.md
+BRAIN_SNAPSHOT.md
