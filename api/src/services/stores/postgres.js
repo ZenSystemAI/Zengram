@@ -177,6 +177,7 @@ export class PostgresStore {
     const params = [];
     let i = 1;
 
+    if (filters.type) { sql += ` AND type = $${i++}`; params.push(filters.type); }
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
