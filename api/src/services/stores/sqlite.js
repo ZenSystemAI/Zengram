@@ -164,6 +164,7 @@ export class SQLiteStore {
     let sql = 'SELECT * FROM events WHERE 1=1';
     const params = {};
 
+    if (filters.type) { sql += ' AND type = @type'; params.type = filters.type; }
     if (filters.source_agent) { sql += ' AND source_agent = @source_agent'; params.source_agent = filters.source_agent; }
     if (filters.category) { sql += ' AND category = @category'; params.category = filters.category; }
     if (filters.client_id) { sql += ' AND client_id = @client_id'; params.client_id = filters.client_id; }

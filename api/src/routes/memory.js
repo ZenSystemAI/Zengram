@@ -669,8 +669,9 @@ memoryRouter.get('/query', async (req, res) => {
       if (subject) filters.subject = subject;
       results = await listStatuses(filters);
     } else {
-      // Default to events (includes decisions)
+      // Events and decisions share the events table — pass type filter if specific
       if (since) filters.since = since;
+      if (type === 'event' || type === 'decision') filters.type = type;
       results = await listEvents(filters);
     }
 
