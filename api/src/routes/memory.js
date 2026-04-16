@@ -4,7 +4,7 @@ import { embed } from '../services/embedders/interface.js';
 import {
   upsertPoint, searchPoints, updatePointPayload,
   findByPayload, computeEffectiveConfidence, getPoint, getPoints,
-} from '../services/qdrant.js';
+} from '../services/pgvector.js';
 import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
@@ -12,16 +12,18 @@ import {
 import { scrubCredentials, scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateMemoryInput, MAX_OBSERVED_BY } from '../middleware/validate.js';
-import { dispatchNotification } from '../services/notifications.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
-import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
 import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
-import { getClientResolver } from '../services/client-resolver.js';
+
+// Canonical agent identity — all writes attributed to "claude-code" regardless
+// of which Claude variant or machine. Retired: ti-claude, mini-claude, morpheus,
+// neo, autolab, n8n (stray writes from these are accepted but coerced).
+const CANONICAL_AGENT = 'claude-code';
 
 export const memoryRouter = Router();
 
@@ -36,21 +38,10 @@ memoryRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
-    // Enforce agent identity: if authenticated with an agent key, source_agent must match
-    if (req.authenticatedAgent && source_agent !== req.authenticatedAgent) {
-      return res.status(403).json({
-        error: `Agent identity mismatch: authenticated as "${req.authenticatedAgent}" but source_agent is "${source_agent}"`,
-      });
-    }
+    // Coerce all writes to canonical identity — per-agent identity was retired.
+    source_agent = CANONICAL_AGENT;
 
-    // Auto-resolve client_id from content if not provided or is 'global'
-    if (!client_id || client_id === 'global') {
-      const resolver = getClientResolver();
-      const resolved = resolver.resolve(content);
-      if (resolved && !Array.isArray(resolved)) {
-        client_id = resolved;
-      }
-    }
+    if (!client_id) client_id = 'global';
 
     // Scrub credentials
     const cleanContent = scrubCredentials(content);
@@ -137,7 +128,6 @@ memoryRouter.post('/', async (req, res) => {
           valid_to: now, // temporal: old fact no longer valid as of supersede time
         });
         deactivateMemory(matches[0].id).catch(() => {});
-        dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
       }
     } else if (type === 'status' && req.body.subject) {
       // Find existing active status with same subject (targeted Qdrant query)
@@ -151,7 +141,6 @@ memoryRouter.post('/', async (req, res) => {
           valid_to: now, // temporal: old status no longer valid as of supersede time
         });
         deactivateMemory(matches[0].id).catch(() => {});
-        dispatchNotification('memory_superseded', { id: matches[0].id, ...matches[0].payload });
       }
     }
 
@@ -243,9 +232,6 @@ memoryRouter.post('/', async (req, res) => {
       }).catch(e => console.error('[memory:keyword-index]', e.message));
     }
 
-    // Dispatch webhook notification for new memory
-    dispatchNotification('memory_stored', { id: pointId, ...payload });
-
     // Link entities in structured store (fire-and-forget — don't block response)
     if (isEntityStoreAvailable() && extractedEntities.length > 0) {
       Promise.resolve().then(async () => {
@@ -310,7 +296,7 @@ memoryRouter.post('/', async (req, res) => {
 });
 
 // GET /memory/search — Multi-path retrieval with RRF fusion
-// Paths: vector (semantic), keyword (BM25), graph (entity BFS)
+// Paths: vector (semantic) + keyword (BM25). Graph BFS path retired in v4.
 memoryRouter.get('/search', async (req, res) => {
   try {
     const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc } = req.query;
@@ -379,7 +365,7 @@ memoryRouter.get('/search', async (req, res) => {
       searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters)
     );
 
-    // Run keyword + graph in parallel (only if multi-path enabled)
+    // Run keyword in parallel with vector (only if multi-path enabled)
     const keywordPromise = (useMultiPath && isKeywordSearchAvailable())
       ? keywordSearch(q, filter, fetchLimit).catch(e => {
           console.error('[memory:keyword-search]', e.message);
@@ -387,31 +373,21 @@ memoryRouter.get('/search', async (req, res) => {
         })
       : Promise.resolve([]);
 
-    const graphPromise = (useMultiPath && isGraphSearchAvailable())
-      ? graphSearch(q, filter, Math.min(maxResults, 20)).catch(e => {
-          console.error('[memory:graph-search]', e.message);
-          return [];
-        })
-      : Promise.resolve([]);
-
-    const [vectorResults, keywordResults, graphResults] = await Promise.all([
-      vectorPromise, keywordPromise, graphPromise,
+    const [vectorResults, keywordResults] = await Promise.all([
+      vectorPromise, keywordPromise,
     ]);
 
     // --- Build result set ---
     let finalResults;
     const retrievalSources = {};
 
-    if (useMultiPath && (keywordResults.length > 0 || graphResults.length > 0)) {
-      // Build ranked lists for RRF
+    if (useMultiPath && keywordResults.length > 0) {
+      // Build ranked lists for RRF (vector + keyword)
       const rankedLists = [
         vectorResults.map(r => ({ id: r.id, source: 'vector' })),
       ];
       if (keywordResults.length > 0) {
         rankedLists.push(keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })));
-      }
-      if (graphResults.length > 0) {
-        rankedLists.push(graphResults.map(r => ({ id: r.memory_id, source: 'graph' })));
       }
 
       const fused = reciprocalRankFusion(rankedLists);
@@ -428,7 +404,7 @@ memoryRouter.get('/search', async (req, res) => {
         payloadMap.set(r.id, { id: r.id, score: r.score, payload: r.payload });
       }
 
-      // Fetch payloads for keyword/graph hits not in vector results
+      // Fetch payloads for keyword hits not in vector results
       const missingIds = topFused.map(f => f.id).filter(id => !payloadMap.has(id));
       if (missingIds.length > 0) {
         try {
@@ -451,7 +427,7 @@ memoryRouter.get('/search', async (req, res) => {
     }
 
     // Post-filter for temporal validity (at_time) — applies to ALL search paths
-    // Vector search already filters via Qdrant range query, but keyword/graph results bypass it
+    // Vector search already filters via pgvector range query, but keyword results bypass it
     if (at_time) {
       finalResults = finalResults.filter(r => {
         const p = r.payload;
@@ -633,7 +609,6 @@ memoryRouter.get('/search', async (req, res) => {
         paths: useMultiPath ? {
           vector: vectorResults.length,
           keyword: keywordResults.length,
-          graph: graphResults.length,
         } : { vector: vectorResults.length },
       };
       if (queryAnalysis.domain) response.retrieval.query_domain = queryAnalysis.domain;
@@ -708,13 +683,6 @@ memoryRouter.patch('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Memory not found' });
     }
 
-    // Enforce agent identity: agents can only update their own memories
-    if (req.authenticatedAgent && point.payload.source_agent !== req.authenticatedAgent) {
-      return res.status(403).json({
-        error: `Agent "${req.authenticatedAgent}" cannot update memories from "${point.payload.source_agent}"`,
-      });
-    }
-
     const now = new Date().toISOString();
     const updatedPayload = { updated_at: now };
 
@@ -773,7 +741,7 @@ memoryRouter.patch('/:id', async (req, res) => {
       await updatePointPayload(id, updatedPayload);
     }
 
-    console.log(`[memory:update] Memory ${id} updated by ${req.authenticatedAgent || 'admin'} fields=[${Object.keys(updatedPayload).join(',')}]`);
+    console.log(`[memory:update] Memory ${id} fields=[${Object.keys(updatedPayload).join(',')}]`);
 
     res.json({
       id,
@@ -805,13 +773,6 @@ memoryRouter.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Memory not found' });
     }
 
-    // Enforce agent identity: agent-scoped keys can only delete their own memories
-    if (req.authenticatedAgent && point.payload.source_agent !== req.authenticatedAgent) {
-      return res.status(403).json({
-        error: `Agent "${req.authenticatedAgent}" cannot delete memories from "${point.payload.source_agent}"`,
-      });
-    }
-
     if (point.payload.active === false) {
       return res.status(200).json({ id, already_inactive: true, message: 'Memory was already inactive' });
     }
@@ -820,20 +781,17 @@ memoryRouter.delete('/:id', async (req, res) => {
     await updatePointPayload(id, {
       active: false,
       deleted_at: now,
-      deleted_by: req.authenticatedAgent || 'admin',
       deletion_reason: reason || null,
     });
 
     deactivateMemory(id).catch(() => {});
-    dispatchNotification('memory_deleted', { id, ...point.payload });
 
-    console.log(`[memory:delete] Memory ${id} soft-deleted by ${req.authenticatedAgent || 'admin'}${reason ? ': ' + reason : ''}`);
+    console.log(`[memory:delete] Memory ${id} soft-deleted${reason ? ': ' + reason : ''}`);
 
     res.json({
       id,
       deleted: true,
       deleted_at: now,
-      deleted_by: req.authenticatedAgent || 'admin',
     });
   } catch (err) {
     console.error('[memory:delete]', err.message);

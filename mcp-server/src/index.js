@@ -270,19 +270,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: 'brain_graph',
-      description: 'Explore entity relationships in the knowledge graph. Returns connected entities with relationship types and strengths.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          entity: { type: 'string', description: 'Entity name to explore' },
-          depth: { type: 'number', description: 'Traversal depth (default 1, max 3)' },
-          min_strength: { type: 'number', description: 'Minimum relationship strength (default 1)' },
-        },
-        required: ['entity'],
-      },
-    },
-    {
       name: 'brain_delete',
       description: 'Soft-delete a memory by ID (marks it inactive). The memory remains in storage but is excluded from search results. Agent-scoped keys can only delete their own memories. Use this for compliance or to remove incorrect/sensitive memories.',
       inputSchema: {
@@ -330,20 +317,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['memory_id'],
-      },
-    },
-    {
-      name: 'brain_client',
-      description: 'Get everything known about a client — brand, strategy, meetings, content, technical details, relationships. Can also do semantic search within a client\'s memories. Accepts fuzzy names (e.g. "AL" resolves to "acme-loans").',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          client: { type: 'string', description: 'Client ID or fuzzy name (resolved via fingerprints)' },
-          category: { type: 'string', enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship'], description: 'Filter by knowledge category (optional)' },
-          query: { type: 'string', description: 'Semantic search within this client\'s memories (optional — omit for full briefing)' },
-          format: { type: 'string', enum: ['compact', 'full'], description: 'compact (default) or full' },
-        },
-        required: ['client'],
       },
     },
     {
@@ -546,15 +519,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         break;
 
-      case 'brain_graph': {
-        const params = new URLSearchParams();
-        if (args.depth) params.set('depth', args.depth);
-        if (args.min_strength) params.set('min_strength', args.min_strength);
-        const qs = params.toString() ? `?${params.toString()}` : '';
-        result = await apiRequest(`/graph/${encodeURIComponent(args.entity)}${qs}`);
-        break;
-      }
-
       case 'brain_delete':
         if (!args.memory_id || typeof args.memory_id !== 'string' || !args.memory_id.trim()) {
           return { content: [{ type: 'text', text: 'Error: memory_id is required' }], isError: true };
@@ -603,20 +567,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (args.limit) params.append('limit', String(args.limit));
           result = await apiRequest(`/entities?${params}`);
         }
-        break;
-      }
-
-      case 'brain_client': {
-        if (!args.client || typeof args.client !== 'string' || !args.client.trim()) {
-          return { content: [{ type: 'text', text: 'Error: "client" is required (client ID or fuzzy name)' }], isError: true };
-        }
-        const { client, category, query, format } = args;
-        const params = new URLSearchParams();
-        if (category) params.set('category', category);
-        if (query) params.set('query', query);
-        if (format) params.set('format', format);
-        const qs = params.toString() ? `?${params.toString()}` : '';
-        result = await apiRequest(`/client/${encodeURIComponent(client)}${qs}`);
         break;
       }
 
