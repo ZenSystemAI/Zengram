@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createQdrantCollection, deleteQdrantCollection, listQdrantCollections, getCollectionInfo } from '../services/qdrant.js';
+import { createQdrantCollection, deleteQdrantCollection, listQdrantCollections, getCollectionInfo } from '../services/pgvector.js';
 import {
   resolveCollection, validateCollectionSlug, registerCollection,
   unregisterCollection, listCollections, getDefaultCollection,
@@ -96,11 +96,6 @@ collectionsRouter.delete('/:name', async (req, res) => {
 
     if (collectionName === getDefaultCollection()) {
       return res.status(400).json({ error: 'Cannot delete the default collection' });
-    }
-
-    // Agent-scoped keys cannot delete collections
-    if (req.authenticatedAgent) {
-      return res.status(403).json({ error: 'Only admin keys can delete collections' });
     }
 
     await deleteQdrantCollection(collectionName);

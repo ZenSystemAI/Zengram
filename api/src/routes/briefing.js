@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { scrollPoints, getCollectionInfo, computeEffectiveConfidence } from '../services/qdrant.js';
+import { scrollPoints, getCollectionInfo, computeEffectiveConfidence } from '../services/pgvector.js';
 
 export const briefingRouter = Router();
 

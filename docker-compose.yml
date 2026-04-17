@@ -1,27 +1,4 @@
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: zengram-qdrant
-    ports:
-      - "127.0.0.1:6334:6333"
-      - "127.0.0.1:6335:6334"
-    volumes:
-      - ./data/qdrant:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   memory-api:
     build: ./api
     container_name: zengram-api
@@ -31,10 +8,13 @@ services:
       - .env
     environment:
       - HOST=0.0.0.0  # Must be 0.0.0.0 inside container for Docker port mapping
-    volumes:
-      - ./data:/app/data
+      - STRUCTURED_STORE=postgres
+    # POSTGRES_URL comes from .env — point at the `zengram-postgres` container name
+    # (not `postgres`) to avoid DNS collisions when zengram-api shares networks with
+    # other stacks that have their own postgres service.
     depends_on:
-      - qdrant
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8084/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
@@ -48,18 +28,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optional: PostgreSQL for production structured storage
-  # Enable with: docker-compose --profile postgres up
   postgres:
-    profiles: ["postgres"]
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: zengram-postgres
+    # Network alias so other containers on the same network can reach us as "zengram-postgres"
+    # regardless of the compose service name, avoiding collisions with other `postgres` services.
+    networks:
+      default:
+        aliases:
+          - zengram-postgres
     ports:
       - "127.0.0.1:5433:5432"
     environment:
-      POSTGRES_DB: zengram
+      POSTGRES_DB: shared_brain
       POSTGRES_USER: brain
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brain_secret}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d shared_brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

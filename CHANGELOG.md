@@ -4,6 +4,33 @@ This changelog covers the entire Zengram project (API, MCP server, adapters, and
 
 The canonical source is [`mcp-server/CHANGELOG.md`](mcp-server/CHANGELOG.md) -- this file mirrors it for convenience.
 
+## 4.0.0 (2026-04-11) — Shared Brain, Slimmed
+
+Variant A from the v4 redesign assessment. The architectural ideas (hybrid retrieval, typed memories, confidence-gated NER, LLM consolidation, credential scrubbing, MCP surface) are unchanged. The multi-agent coordination layer and the visual-graph features built for É-Marketing demos are gone.
+
+### Removed
+- **Per-agent identity system.** `ti-claude`, `mini-claude`, `morpheus`, `neo`, `autolab`, `n8n` retired. One canonical `source_agent: "claude-code"` — all writes coerced regardless of caller. Auth middleware no longer binds `req.authenticatedAgent`; only a single admin API key (`BRAIN_API_KEY`) authenticates requests. See `scripts/v4-migrate-source-agent.sql` to backfill historical Postgres rows.
+- **Graph BFS retrieval path.** `services/graph-search.js` and the graph contribution to `/memory/search` and `/reflect` removed. Hybrid retrieval is now vector + BM25 only. The `entities` table, alias cache, and entity-memory links are still maintained for coreference and stats.
+- **Graph visualization.** `/graph/html`, `/graph/full/html`, `/graph/:entity/html`, `/graph/:entity` JSON routes, their D3.js template, the browseable entity-index template, and the entity-reclassify-suggestions endpoint removed.
+- **Dead route files.** `/dashboard`, `/subscribe`, `/webhook`, `/reconcile`, `/client` — none had active callers.
+- **Dormant adapters.** `adapters/openclaw/` (465 LOC, 0 active writers) and `adapters/n8n/` (95 LOC, 0 active writers) deleted.
+- **Unused SDKs.** `sdk/python/` and `sdk/typescript/` (~5,000 LOC combined, zero external consumers — MCP server is the only integration path in practice).
+- **Dead services.** `event-bus.js`, `feedback-loop.js`, `notifications.js`, `client-resolver.js`, `entity-type-heuristics.js` removed.
+
+### Changed
+- **Consolidation gated by corpus size.** Scheduled runs skip if active corpus < `CONSOLIDATION_MIN_CORPUS` (default 1500). Manual `POST /consolidate` always runs. At the current 500-memory scale, scheduled consolidations were running every 6h with almost no work — wasted LLM calls.
+- **CLAUDE.md + docs/configuration.md** rewritten for the v4 surface. Removed per-agent key table, Baserow store section, webhook/graph sections.
+- **.env.example** simplified; removed `AGENT_KEY_*`, graph tuning vars, webhook vars, client-resolver vars. Added `CONSOLIDATION_MIN_CORPUS`.
+
+### Deferred (still on the roadmap)
+- **Qdrant → pgvector migration.** The biggest single piece of Variant A, needs a DB backup + deploy window. Not touched tonight. Left Qdrant as the vector store; everything else cuts through without it.
+
+### Companion change outside this repo
+- **Mission Center**: Removed the Brain Graph tab from `js/views/memory.js` (it embedded the deleted `/graph/full/html` iframe). Fixed a stale `BRAIN_URL` pointer that was pointing at the Beelink (192.168.18.40) instead of G6 (192.168.18.42).
+
+### Deleted tests
+- `tests/client-resolver.test.js` and `tests/notifications.test.js` (modules they covered no longer exist). 104 unit tests still pass.
+
 ## 2.4.0 (2026-03-28)
 
 ### New Features

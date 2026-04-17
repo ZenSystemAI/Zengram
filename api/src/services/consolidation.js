@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { complete, getLLMInfo } from './llm/interface.js';
-import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './qdrant.js';
+import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './pgvector.js';
 import { embed } from './embedders/interface.js';
 import {
   isEntityStoreAvailable, isStoreAvailable, createEntity, findEntity, linkEntityToMemory,
@@ -8,7 +8,6 @@ import {
 } from './stores/interface.js';
 import { isKeywordSearchAvailable, indexMemory } from './keyword-search.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
-import { dispatchNotification } from './notifications.js';
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
 
@@ -355,11 +354,6 @@ async function consolidateBatch(points, clientId) {
               superseded_by: mergedId,
               superseded_at: now,
             });
-            // Find the source point in the batch to get its payload for the notification
-            const sourcePoint = points.find(p => p.id === sourceId);
-            if (sourcePoint) {
-              dispatchNotification('memory_superseded', { id: sourceId, ...sourcePoint.payload });
-            }
           } catch (e) {
             // Source memory might not exist — skip
           }

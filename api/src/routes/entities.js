@@ -4,8 +4,7 @@ import {
   _getStoreInstance,
 } from '../services/stores/interface.js';
 import { reclassifyEntity } from '../services/entities.js';
-import { batchUpdateEntityType } from '../services/qdrant.js';
-import { findMisclassifiedEntities } from '../services/entity-type-heuristics.js';
+import { batchUpdateEntityType } from '../services/pgvector.js';
 
 export const entitiesRouter = Router();
 
@@ -41,27 +40,6 @@ entitiesRouter.get('/stats', async (req, res) => {
     res.json(stats);
   } catch (err) {
     console.error('[entities:stats]', err.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// GET /entities/reclassify/suggestions — Auto-suggest misclassified entities
-entitiesRouter.get('/reclassify/suggestions', async (req, res) => {
-  try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
-    }
-
-    // Fetch all entities (high limit to scan them all)
-    const result = await listEntities({ limit: 5000 });
-    const suggestions = findMisclassifiedEntities(result.results);
-
-    res.json({
-      count: suggestions.length,
-      suggestions,
-    });
-  } catch (err) {
-    console.error('[entities:reclassify:suggestions]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

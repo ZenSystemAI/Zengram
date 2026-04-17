@@ -2,7 +2,7 @@
 // Runs inline at store time (<5ms target). No LLM calls, no extra embedding calls.
 // Scores are advisory — they annotate memories but never block storage.
 
-import { searchPoints } from './qdrant.js';
+import { searchPoints } from './pgvector.js';
 
 // Score thresholds
 const SCORE_NORMAL = 0.7;

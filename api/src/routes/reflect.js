@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import { embed } from '../services/embedders/interface.js';
-import { searchPoints } from '../services/qdrant.js';
+import { searchPoints } from '../services/pgvector.js';
 import { complete, getLLMInfo } from '../services/llm/interface.js';
 import { isKeywordSearchAvailable, keywordSearch } from '../services/keyword-search.js';
-import { isGraphSearchAvailable, graphSearch } from '../services/graph-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
-import { getPoints } from '../services/qdrant.js';
+import { getPoints } from '../services/pgvector.js';
 
 export const reflectRouter = Router();
 
@@ -58,25 +57,18 @@ reflectRouter.post('/', async (req, res) => {
       ? keywordSearch(topic, filter, fetchLimit).catch(() => [])
       : Promise.resolve([]);
 
-    const graphPromise = (MULTI_PATH_SEARCH && isGraphSearchAvailable())
-      ? graphSearch(topic, filter, Math.min(maxMemories, 20)).catch(() => [])
-      : Promise.resolve([]);
-
-    const [vectorResults, keywordResults, graphResults] = await Promise.all([
-      vectorPromise, keywordPromise, graphPromise,
+    const [vectorResults, keywordResults] = await Promise.all([
+      vectorPromise, keywordPromise,
     ]);
 
-    // Fuse results
+    // Fuse results (vector + keyword)
     let memories;
-    if (MULTI_PATH_SEARCH && (keywordResults.length > 0 || graphResults.length > 0)) {
+    if (MULTI_PATH_SEARCH && keywordResults.length > 0) {
       const rankedLists = [
         vectorResults.map(r => ({ id: r.id, source: 'vector' })),
       ];
       if (keywordResults.length > 0) {
         rankedLists.push(keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })));
-      }
-      if (graphResults.length > 0) {
-        rankedLists.push(graphResults.map(r => ({ id: r.memory_id, source: 'graph' })));
       }
 
       const fused = reciprocalRankFusion(rankedLists).slice(0, maxMemories);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
-import { scrollPoints, upsertPoint, findByPayload } from '../services/qdrant.js';
+import { scrollPoints, upsertPoint, findByPayload } from '../services/pgvector.js';
 import { embed } from '../services/embedders/interface.js';
 import {
   isStoreAvailable, createEvent, upsertFact, upsertStatus,
@@ -10,7 +10,6 @@ import { scrubCredentials } from '../services/scrub.js';
 import { validateMemoryInput } from '../middleware/validate.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
-import { dispatchNotification } from '../services/notifications.js';
 
 export const exportRouter = Router();
 
@@ -206,9 +205,6 @@ exportRouter.post('/import', async (req, res) => {
               }
             }
           } catch (e) { /* non-blocking */ }
-
-          // Notification (fire-and-forget)
-          dispatchNotification('memory_stored', { id: pointId, ...payload });
 
           // Write to structured store (matching memory.js patterns)
           if (isStoreAvailable()) {

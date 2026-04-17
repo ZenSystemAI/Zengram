@@ -16,19 +16,9 @@ All configuration is via environment variables, defined in `.env` (loaded by Doc
 | `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN/Docker access. The `docker-compose.yml` overrides this to `0.0.0.0` inside the container. |
 | `API_BIND` | `127.0.0.1` | Docker port binding address. Set to `0.0.0.0` in `.env` to expose the API on all interfaces from the host. |
 
-## Per-Agent API Keys
+## Authentication (v4)
 
-Agent keys bind authentication to an agent identity. When using an agent key, the `source_agent` field on writes must match the authenticated agent name.
-
-| Variable | Format | Example |
-|----------|--------|---------|
-| `AGENT_KEY_claude_code` | hex string | `openssl rand -hex 32` |
-| `AGENT_KEY_n8n` | hex string | `openssl rand -hex 32` |
-| `AGENT_KEY_morpheus` | hex string | `openssl rand -hex 32` |
-
-The env var name `AGENT_KEY_<name>` maps to agent identity `<name>` with underscores converted to hyphens and lowercased. So `AGENT_KEY_claude_code` authenticates as `claude-code`.
-
-Agents authenticated with their own key can only update or delete memories where `source_agent` matches their identity. The admin key (`BRAIN_API_KEY`) bypasses this restriction.
+Per-agent API keys were retired in v4. A single admin key (`BRAIN_API_KEY`) authenticates every caller, and all writes are attributed to `source_agent: "claude-code"` regardless of which Claude variant or machine made the call. This collapsed `ti-claude`, `mini-claude`, `morpheus`, `neo`, `autolab`, and `n8n` into one canonical identity.
 
 ## Rate Limiting
 
@@ -109,21 +99,9 @@ SQLite is the default. Supports all features: events, facts, statuses, entities,
 
 Postgres provides full BM25 via `tsvector` with GIN index. Recommended for production or when keyword search quality matters.
 
-### Baserow
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BASEROW_URL` | (required if store=baserow) | Baserow API URL |
-| `BASEROW_API_KEY` | (required if store=baserow) | Baserow auth token |
-| `BASEROW_EVENTS_TABLE_ID` | (required) | Table ID for events |
-| `BASEROW_FACTS_TABLE_ID` | (required) | Table ID for facts |
-| `BASEROW_STATUS_TABLE_ID` | (required) | Table ID for statuses |
-
-Baserow is limited: no entity store, no keyword search, no graph search. Only use if Baserow is already your data layer.
-
 ### None
 
-Set `STRUCTURED_STORE=none` to run with Qdrant only. Disables: structured queries (`/memory/query`), keyword search, graph search, entity store. Vector search still works.
+Set `STRUCTURED_STORE=none` to run with Qdrant only. Disables: structured queries (`/memory/query`), keyword search, entity store. Vector search still works.
 
 ## Consolidation Engine
 
@@ -131,6 +109,7 @@ Set `STRUCTURED_STORE=none` to run with Qdrant only. Disables: structured querie
 |----------|---------|-------------|
 | `CONSOLIDATION_ENABLED` | `true` | Set to `false` to disable entirely |
 | `CONSOLIDATION_INTERVAL` | `0 */6 * * *` | Cron expression for scheduled runs (default: every 6 hours) |
+| `CONSOLIDATION_MIN_CORPUS` | `1500` | Skip scheduled runs if active corpus is below this size. Manual `POST /consolidate` always runs. |
 | `CONSOLIDATION_LLM` | `openai` | LLM provider: `openai`, `anthropic`, `ollama`, `gemini` |
 | `CONSOLIDATION_MODEL` | `gpt-4o-mini` | Model name |
 | `ANTHROPIC_API_KEY` | (for anthropic provider) | Anthropic API key |
@@ -142,6 +121,10 @@ The consolidation engine processes memories in batches of 50, grouped by client_
 - Reclassifies knowledge categories
 - Creates entity relationships
 - Cleans up old events
+
+### Gating (v4)
+
+Scheduled consolidation is now gated by corpus size. If the active corpus is below `CONSOLIDATION_MIN_CORPUS` (default 1500), the scheduled run is skipped — consolidation has almost no work to do on small corpora and the LLM calls are wasted. To force a run regardless of size, `POST /consolidate` manually.
 
 ### When to change the interval
 
@@ -180,47 +163,16 @@ The consolidation cleanup only expires events that meet ALL criteria:
 
 Critical and high-importance events are never auto-expired. Events that have been accessed at least once are never auto-expired.
 
-## Client Resolver
+## Hybrid Retrieval
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BASEROW_CLIENTS_TABLE_ID` | (optional) | Baserow table ID containing client fingerprints |
-| `BASEROW_CLIENT_TOKEN` | (falls back to `BASEROW_API_KEY`) | Separate token for client table access |
-
-The client resolver loads fingerprints from a Baserow table with a `client_fingerprints` field. Each row maps a client_id to patterns: aliases, people names, domains, and keywords. This enables:
-- Fuzzy client name resolution in `/client/:id` (e.g., "AL" -> "acme-loans")
-- Auto-resolution of `client_id` from content when not provided in store requests
-
-## Webhook Notifications
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WEBHOOK_NOTIFY_URLS` | (none) | Comma-separated webhook URLs |
-
-Events dispatched: `memory_stored`, `memory_superseded`, `memory_deleted`, `memory_consolidated`, `entity_created`, `entity_linked`.
-
-Webhooks are fire-and-forget with a 10-second timeout. Failures are logged but don't block the API.
-
-## Multi-Path Retrieval
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MULTI_PATH_SEARCH` | `true` | Enable parallel vector + keyword + graph search |
+| `MULTI_PATH_SEARCH` | `true` | Enable parallel vector + keyword (BM25) search with RRF fusion |
 | `RRF_K` | `60` | RRF smoothing constant. Range 50-100. Higher = more equal weighting across ranks. |
-
-### Graph Search Tuning
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GRAPH_SEARCH_MAX_DEPTH` | `2` | Max BFS hops through entity graph |
-| `GRAPH_SEARCH_DECAY` | `0.8` | Activation decay per hop |
-| `GRAPH_SEARCH_CAUSAL_BOOST` | `2.0` | Boost for typed relationships (uses, works_on, etc.) vs co_occurrence |
 
 **RRF_K tuning**: Lower values (50) give more weight to top-ranked items in each list. Higher values (100) flatten the distribution, giving later-ranked items more influence. Default of 60 works well for most cases.
 
-**Graph depth**: Depth 1 is fast but only finds directly-related entities. Depth 2 (default) finds entities connected through one intermediary. Depth 3 is rarely needed and can be slow with dense graphs.
-
-**Causal boost**: The 2.0x boost means typed relationships (uses, works_on, contact_of, same_owner, competitor_of) are weighted twice as heavily as co_occurrence links during BFS traversal. Increase if you want graph search to favor meaningful connections over mere co-mention.
+Graph BFS search was removed in v4. At the current scale (~500 active memories), vector + BM25 was catching everything the graph path was contributing, and the graph machinery (entity-relationships table, BFS traversal, co-occurrence scoring) added complexity without measurable retrieval lift. The `entities` table and alias cache are still maintained for coreference and stats.
 
 ## MCP Server Timeouts
 

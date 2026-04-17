@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { getMemoryStats, scrollPoints, computeEffectiveConfidence, DECAY_TYPES } from '../services/qdrant.js';
+import { getMemoryStats, scrollPoints, computeEffectiveConfidence, DECAY_TYPES } from '../services/pgvector.js';
 import { isEntityStoreAvailable, getEntityStats } from '../services/stores/interface.js';
 import { isKeywordSearchAvailable, getKeywordIndexCount } from '../services/keyword-search.js';
-import { isGraphSearchAvailable } from '../services/graph-search.js';
 
 export const statsRouter = Router();
 
@@ -52,7 +51,6 @@ statsRouter.get('/', async (req, res) => {
         multi_path: process.env.MULTI_PATH_SEARCH !== 'false',
         keyword_search: isKeywordSearchAvailable(),
         keyword_index_count: keywordIndexCount,
-        graph_search: isGraphSearchAvailable(),
       },
     });
   } catch (err) {
