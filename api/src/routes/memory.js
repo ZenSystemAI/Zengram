@@ -9,7 +9,7 @@ import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
-import { scrubCredentials, scrubObject } from '../services/scrub.js';
+import { scrubCredentials, scrubObject, contentHash as hashContent } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateMemoryInput, validateContent, validateImportance, validateMetadata, VALID_KNOWLEDGE_CATEGORIES } from '../middleware/validate.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
@@ -24,6 +24,19 @@ const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default:
 // of which Claude variant or machine. Retired: ti-claude, mini-claude, morpheus,
 // neo, autolab, n8n (stray writes from these are accepted but coerced).
 const CANONICAL_AGENT = 'claude-code';
+
+// Shared 404-or-point helper for routes that operate on an existing memory.
+// Returns the point on success, null after sending the 404.
+async function requirePoint(id, res) {
+  let point;
+  try { point = await getPoint(id); }
+  catch { res.status(404).json({ error: 'Memory not found' }); return null; }
+  if (!point || !point.payload) {
+    res.status(404).json({ error: 'Memory not found' });
+    return null;
+  }
+  return point;
+}
 
 export const memoryRouter = Router();
 
@@ -47,7 +60,7 @@ memoryRouter.post('/', async (req, res) => {
     const cleanContent = scrubCredentials(content);
 
     // Generate content hash for dedup
-    const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
+    const contentHash = hashContent(cleanContent);
 
     // --- Deduplication check ---
     // With canonical-identity coercion, every new write has the same
@@ -645,17 +658,8 @@ memoryRouter.patch('/:id', async (req, res) => {
       const e = validateMetadata(metadata); if (e) return res.status(400).json({ error: e });
     }
 
-    // Fetch existing point
-    let point;
-    try {
-      point = await getPoint(id);
-    } catch (e) {
-      return res.status(404).json({ error: 'Memory not found' });
-    }
-
-    if (!point || !point.payload) {
-      return res.status(404).json({ error: 'Memory not found' });
-    }
+    const point = await requirePoint(id, res);
+    if (!point) return;
 
     const now = new Date().toISOString();
     const updatedPayload = { updated_at: now };
@@ -668,7 +672,7 @@ memoryRouter.patch('/:id', async (req, res) => {
     // Content change: re-scrub, re-hash, re-embed, re-extract entities, re-index
     if (content) {
       const cleanContent = scrubCredentials(content);
-      const contentHash = crypto.createHash('sha256').update(cleanContent).digest('hex').slice(0, 16);
+      const contentHash = hashContent(cleanContent);
 
       updatedPayload.text = cleanContent;
       updatedPayload.content_hash = contentHash;
@@ -735,17 +739,8 @@ memoryRouter.delete('/:id', async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body || {};
 
-    // Verify the point exists
-    let point;
-    try {
-      point = await getPoint(id);
-    } catch (e) {
-      return res.status(404).json({ error: 'Memory not found' });
-    }
-
-    if (!point || !point.payload) {
-      return res.status(404).json({ error: 'Memory not found' });
-    }
+    const point = await requirePoint(id, res);
+    if (!point) return;
 
     if (point.payload.active === false) {
       return res.status(200).json({ id, already_inactive: true, message: 'Memory was already inactive' });

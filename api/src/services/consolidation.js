@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { contentHash as hashContent } from './scrub.js';
 import { complete, getLLMInfo } from './llm/interface.js';
 import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './pgvector.js';
 import { embed } from './embedders/interface.js';
@@ -285,88 +286,84 @@ async function consolidateBatch(points, clientId) {
 
   const now = new Date().toISOString();
   let merged = 0, contradictions = 0, connections = 0, compressedSummaries = 0;
-
-  // Store merged facts as new memories (with dedup)
   let skipped = 0;
+
+  // Pipeline shared by merged_facts and compressed_summaries: the two produce
+  // the same kind of consolidated fact-type memory and only differ in
+  // (a) the metadata.consolidation_type tag and (b) whether source memories
+  // get superseded (merged) or just flagged consolidated (summary).
+  const storeConsolidatedFact = async (item, { consolidationType, supersedeSources }) => {
+    const content = item.content;
+    const contentHash = hashContent(content);
+
+    // Exact-hash dedup, then semantic dedup before embedding a new point.
+    const existing = await findByPayload('content_hash', contentHash, { active: true });
+    if (existing.length > 0) { skipped++; return null; }
+
+    const vector = await embed(content, 'store');
+
+    const similar = await searchPoints(vector, { active: true }, 1);
+    if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) { skipped++; return null; }
+
+    const newId = crypto.randomUUID();
+    const targetClient = item.client_id || clientId;
+    await upsertPoint(newId, vector, {
+      text: content,
+      type: 'fact',
+      source_agent: 'consolidation-engine',
+      client_id: targetClient,
+      category: 'semantic',
+      importance: sanitizeImportance(item.importance),
+      key: item.key || contentHash,
+      content_hash: contentHash,
+      created_at: now,
+      last_accessed_at: now,
+      access_count: 0,
+      confidence: 1.0,
+      active: true,
+      consolidated: true,
+      metadata: { source_memories: item.source_memories, consolidation_type: consolidationType },
+    });
+
+    if (isKeywordSearchAvailable()) {
+      indexMemory(newId, content, { client_id: targetClient, source_agent: 'consolidation-engine', type: 'fact' })
+        .catch(e => console.error('[consolidation:keyword-index]', e.message));
+    }
+
+    if (isStoreAvailable()) {
+      const { upsertFact } = await import('./stores/interface.js');
+      upsertFact({
+        key: item.key || contentHash,
+        value: content,
+        content,
+        source_agent: 'consolidation-engine',
+        client_id: targetClient,
+        category: 'semantic',
+        importance: sanitizeImportance(item.importance),
+        knowledge_category: 'general',
+        content_hash: contentHash,
+        created_at: now,
+      }).catch(e => console.error('[consolidation:store-fact]', e.message));
+    }
+
+    if (item.source_memories?.length > 0) {
+      const sourceUpdate = supersedeSources
+        ? { active: false, superseded_by: newId, superseded_at: now }
+        : { consolidated: true, consolidated_at: now };
+      for (const sourceId of item.source_memories) {
+        await updatePointPayload(sourceId, sourceUpdate);
+      }
+    }
+
+    return newId;
+  };
+
   if (result.merged_facts?.length > 0) {
     for (const fact of result.merged_facts) {
       if (typeof fact?.content !== 'string' || !fact.content.trim()) continue;
       if (fact.source_memories && !Array.isArray(fact.source_memories)) fact.source_memories = [];
-      const content = fact.content;
-      const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
-
-      // Exact dedup: skip if identical content already exists
-      const existing = await findByPayload('content_hash', contentHash, { active: true });
-      if (existing.length > 0) {
-        skipped++;
-        continue;
-      }
-
-      const vector = await embed(content, 'store');
-
-      // Semantic dedup: skip if a very similar memory already exists
-      const similar = await searchPoints(vector, { active: true }, 1);
-      if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) {
-        skipped++;
-        continue;
-      }
-
-      const mergedId = crypto.randomUUID();
-      await upsertPoint(mergedId, vector, {
-        text: content,
-        type: 'fact',
-        source_agent: 'consolidation-engine',
-        client_id: fact.client_id || clientId,
-        category: 'semantic',
-        importance: sanitizeImportance(fact.importance),
-        key: fact.key || contentHash,
-        content_hash: contentHash,
-        created_at: now,
-        last_accessed_at: now,
-        access_count: 0,
-        confidence: 1.0,
-        active: true,
-        consolidated: true,
-        metadata: { source_memories: fact.source_memories, consolidation_type: 'merged' },
-      });
-
-      // Index in keyword search (so merged facts appear in BM25 results)
-      if (isKeywordSearchAvailable()) {
-        indexMemory(mergedId, content, {
-          client_id: fact.client_id || clientId,
-          source_agent: 'consolidation-engine',
-          type: 'fact',
-        }).catch(e => console.error('[consolidation:keyword-index]', e.message));
-      }
-
-      // Write to structured DB (so merged facts appear in /memory/query)
-      if (isStoreAvailable()) {
-        const { upsertFact } = await import('./stores/interface.js');
-        upsertFact({
-          key: fact.key || contentHash,
-          value: content,
-          content,
-          source_agent: 'consolidation-engine',
-          client_id: fact.client_id || clientId,
-          category: 'semantic',
-          importance: sanitizeImportance(fact.importance),
-          knowledge_category: 'general',
-          content_hash: contentHash,
-          created_at: now,
-        }).catch(e => console.error('[consolidation:store-fact]', e.message));
-      }
-
-      // Supersede source memories — the merged fact replaces them.
-      if (fact.source_memories?.length > 0) {
-        for (const sourceId of fact.source_memories) {
-          await updatePointPayload(sourceId, {
-            active: false,
-            superseded_by: mergedId,
-            superseded_at: now,
-          });
-        }
-      }
-      merged++;
+      const id = await storeConsolidatedFact(fact, { consolidationType: 'merged', supersedeSources: true });
+      if (id) merged++;
     }
   }
 
@@ -376,7 +373,7 @@ async function consolidateBatch(points, clientId) {
       const content = `CONTRADICTION DETECTED: ${contradiction.description}. Suggested resolution: ${contradiction.suggested_resolution}`;
       const vector = await embed(content, 'store');
       const contradictionId = crypto.randomUUID();
-      const contradictionHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+      const contradictionHash = hashContent(content);
       await upsertPoint(contradictionId, vector, {
         text: content,
         type: 'event',
@@ -430,86 +427,12 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Store compressed summaries as new fact-type memories (without superseding source memories)
   if (result.compressed_summaries?.length > 0) {
     for (const summary of result.compressed_summaries) {
       if (typeof summary?.content !== 'string' || !summary.content.trim()) continue;
       if (summary.source_memories && !Array.isArray(summary.source_memories)) summary.source_memories = [];
-      const content = summary.content;
-      const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
-
-      // Exact dedup: skip if identical content already exists
-      const existing = await findByPayload('content_hash', contentHash, { active: true });
-      if (existing.length > 0) {
-        skipped++;
-        continue;
-      }
-
-      const vector = await embed(content, 'store');
-
-      // Semantic dedup: skip if a very similar memory already exists
-      const similar = await searchPoints(vector, { active: true }, 1);
-      if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) {
-        skipped++;
-        continue;
-      }
-
-      const summaryId = crypto.randomUUID();
-      await upsertPoint(summaryId, vector, {
-        text: content,
-        type: 'fact',
-        source_agent: 'consolidation-engine',
-        client_id: summary.client_id || clientId,
-        category: 'semantic',
-        importance: sanitizeImportance(summary.importance),
-        key: summary.key || contentHash,
-        content_hash: contentHash,
-        created_at: now,
-        last_accessed_at: now,
-        access_count: 0,
-        confidence: 1.0,
-        active: true,
-        consolidated: true,
-        metadata: { source_memories: summary.source_memories, consolidation_type: 'compressed_summary' },
-      });
-
-      // Index in keyword search
-      if (isKeywordSearchAvailable()) {
-        indexMemory(summaryId, content, {
-          client_id: summary.client_id || clientId,
-          source_agent: 'consolidation-engine',
-          type: 'fact',
-        }).catch(e => console.error('[consolidation:keyword-index]', e.message));
-      }
-
-      // Write to structured DB
-      if (isStoreAvailable()) {
-        const { upsertFact } = await import('./stores/interface.js');
-        upsertFact({
-          key: summary.key || contentHash,
-          value: content,
-          content,
-          source_agent: 'consolidation-engine',
-          client_id: summary.client_id || clientId,
-          category: 'semantic',
-          importance: sanitizeImportance(summary.importance),
-          knowledge_category: 'general',
-          content_hash: contentHash,
-          created_at: now,
-        }).catch(e => console.error('[consolidation:store-fact]', e.message));
-      }
-
-      // Mark source memories as consolidated without superseding them.
-      if (summary.source_memories?.length > 0) {
-        for (const sourceId of summary.source_memories) {
-          await updatePointPayload(sourceId, {
-            consolidated: true,
-            consolidated_at: now,
-          });
-        }
-      }
-
-      compressedSummaries++;
+      const id = await storeConsolidatedFact(summary, { consolidationType: 'compressed_summary', supersedeSources: false });
+      if (id) compressedSummaries++;
     }
   }
 

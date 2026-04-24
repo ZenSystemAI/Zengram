@@ -1,5 +1,14 @@
 // Credential scrubbing — redacts secrets before storing memories
 
+import crypto from 'crypto';
+
+// Short deterministic content fingerprint used as the dedup key across the
+// write pipeline. First 16 hex chars of SHA-256; long enough to make
+// collisions vanishingly unlikely at the corpus sizes Zengram handles.
+export function contentHash(text) {
+  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
 const PATTERNS = [
   // API keys and tokens
   { regex: /(?:api[_-]?key|token|secret|password|bearer)\s*[:=]\s*['"]?[\w\-./]{20,}['"]?/gi, replace: '[CREDENTIAL_REDACTED]' },

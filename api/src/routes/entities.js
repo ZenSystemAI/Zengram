@@ -8,14 +8,18 @@ import { batchUpdateEntityType } from '../services/pgvector.js';
 
 export const entitiesRouter = Router();
 
+// Returns true if the entity store is live. Otherwise sends a 400 and returns
+// false so the caller can short-circuit with `if (!requireEntityStore(res)) return;`.
+function requireEntityStore(res) {
+  if (isEntityStoreAvailable()) return true;
+  res.status(400).json({ error: 'Entity queries require a structured store. Set STRUCTURED_STORE=postgres in .env.' });
+  return false;
+}
+
 // GET /entities — List all entities
 entitiesRouter.get('/', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({
-        error: 'Entity queries require a structured store. Set STRUCTURED_STORE=postgres in .env.',
-      });
-    }
+    if (!requireEntityStore(res)) return;
 
     const { type: entityType, limit, offset } = req.query;
     const result = await listEntities({ entity_type: entityType, limit, offset });
@@ -47,9 +51,7 @@ entitiesRouter.get('/stats', async (req, res) => {
 // POST /entities/reclassify — Reclassify entity types
 entitiesRouter.post('/reclassify', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require a structured store.' });
-    }
+    if (!requireEntityStore(res)) return;
 
     const { reclassifications, dry_run } = req.body;
     const isDryRun = dry_run !== false; // default true
@@ -167,9 +169,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
 // GET /entities/:name — Single entity by name or alias
 entitiesRouter.get('/:name', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require a structured store.' });
-    }
+    if (!requireEntityStore(res)) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {
@@ -194,9 +194,7 @@ entitiesRouter.get('/:name', async (req, res) => {
 // DELETE /entities/:name — Delete an entity and its links
 entitiesRouter.delete('/:name', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require a structured store.' });
-    }
+    if (!requireEntityStore(res)) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {
@@ -228,9 +226,7 @@ entitiesRouter.delete('/:name', async (req, res) => {
 // POST /entities/:name/merge — Merge another entity into this one
 entitiesRouter.post('/:name/merge', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require a structured store.' });
-    }
+    if (!requireEntityStore(res)) return;
 
     const { merge_from } = req.body;
     if (!merge_from) {
@@ -316,9 +312,7 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
 // GET /entities/:name/memories — All memories linked to an entity
 entitiesRouter.get('/:name/memories', async (req, res) => {
   try {
-    if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require a structured store.' });
-    }
+    if (!requireEntityStore(res)) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {

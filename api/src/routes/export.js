@@ -6,7 +6,7 @@ import {
   isStoreAvailable, createEvent, upsertFact, upsertStatus,
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
-import { scrubCredentials } from '../services/scrub.js';
+import { scrubCredentials, contentHash as hashContent } from '../services/scrub.js';
 import { validateMemoryInput } from '../middleware/validate.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
@@ -155,7 +155,7 @@ exportRouter.post('/import', async (req, res) => {
           const content = scrubCredentials(rawContent);
 
           // Compute content hash from scrubbed content
-          const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+          const contentHash = hashContent(content);
 
           // Check for existing memory with same content hash, scoped by tenant + type
           const existing = await findByPayload('content_hash', contentHash, {
