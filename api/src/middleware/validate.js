@@ -52,7 +52,7 @@ export function validateMetadata(metadata) {
   return null;
 }
 
-export function validateKnowledgeCategory(kc) {
+function validateKnowledgeCategory(kc) {
   if (kc === undefined || kc === null) return null; // optional, defaults to 'general'
   if (!VALID_KNOWLEDGE_CATEGORIES.includes(kc)) return `Invalid knowledge_category: ${kc}. Must be one of: ${VALID_KNOWLEDGE_CATEGORIES.join(', ')}`;
   return null;
@@ -65,11 +65,11 @@ export function validateStringField(value, name, maxLen = MAX_STRING_FIELD_LENGT
   return null;
 }
 
-export function validateClientId(clientId) {
+function validateClientId(clientId) {
   return validateStringField(clientId, 'client_id', 64);
 }
 
-export function validateTemporalFields(valid_from, valid_to) {
+function validateTemporalFields(valid_from, valid_to) {
   if (valid_from !== undefined && valid_from !== null) {
     if (typeof valid_from !== 'string' || isNaN(Date.parse(valid_from))) {
       return 'valid_from must be a valid ISO 8601 timestamp';
@@ -102,4 +102,4 @@ export function validateMemoryInput({ type, content, source_agent, importance, m
     || null;
 }
 
-export { MAX_OBSERVED_BY, VALID_TYPES, VALID_IMPORTANCE };
+export { MAX_OBSERVED_BY, VALID_TYPES, VALID_IMPORTANCE, VALID_KNOWLEDGE_CATEGORIES };

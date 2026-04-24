@@ -16,21 +16,6 @@ const NEAR_DUPLICATE_PENALTY = 0.3;
 const MIN_CONTENT_LENGTH = 20;
 const MAX_CONTENT_LENGTH = 5000;
 
-// --- Source Trust Cache ---
-// Cached aggregate: agent → { total_accesses, total_memories, trust_score }
-// Refreshed periodically via feedback loop; starts empty (all agents trusted equally).
-const sourceTrustCache = new Map();
-
-export function updateSourceTrust(agentStats) {
-  for (const [agent, stats] of Object.entries(agentStats)) {
-    sourceTrustCache.set(agent, stats);
-  }
-}
-
-export function getSourceTrust(agent) {
-  return sourceTrustCache.get(agent)?.trust_score ?? 0.5;
-}
-
 /**
  * Score an incoming memory for relevance.
  * Called after entity extraction and embedding, before Qdrant upsert.
@@ -81,18 +66,13 @@ export async function scoreRelevance({ content, type, importance, source_agent, 
   signals.importance = importance || 'medium';
   score += impBoost;
 
-  // 4. Source trust — agents with historically useful memories get a boost
-  const trust = getSourceTrust(source_agent);
-  signals.source_trust = +trust.toFixed(2);
-  score += (trust - 0.5) * 0.2; // Range: -0.1 to +0.1
-
-  // 5. Type bonus — facts and decisions are inherently more durable
+  // 4. Type bonus — facts and decisions are inherently more durable
   if (type === 'fact' || type === 'decision') {
     signals.type_bonus = true;
     score += 0.05;
   }
 
-  // 6. Near-duplicate check (uses the already-computed vector — no extra embed call)
+  // 5. Near-duplicate check (uses the already-computed vector — no extra embed call)
   // Quick vector search: find the closest existing memory
   try {
     const filter = { active: true };

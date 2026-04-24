@@ -69,13 +69,6 @@ export function isStoreAvailable() {
   return store !== null;
 }
 
-export function getStoreInfo() {
-  return {
-    backend: BACKEND,
-    available: store !== null,
-  };
-}
-
 // Entity store — available for sqlite/postgres, no-ops for baserow/none
 export function isEntityStoreAvailable() {
   return store !== null && (BACKEND === 'sqlite' || BACKEND === 'postgres');
@@ -117,15 +110,8 @@ export async function createRelationship(sourceId, targetId, type) {
   return requireStore().createRelationship(sourceId, targetId, type);
 }
 
-export async function getRelationships(entityId, minStrength) {
-  return requireStore().getRelationships(entityId, minStrength);
-}
-
-export async function listRelationships(filters) {
-  return requireStore().listRelationships(filters);
-}
-
-// Direct store access (used by graph visualization, keyword search init)
+// Direct store access — used by keyword-search init to bind the underlying
+// SQLite/Postgres connection to the FTS index at startup.
 export function _getStoreInstance() {
   return store;
 }

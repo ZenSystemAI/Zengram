@@ -50,14 +50,3 @@ export function getEmbeddingDimensions() {
   if (!provider) throw new Error('Embedding provider not initialized.');
   return provider.getDimensions();
 }
-
-export function getEmbeddingInfo() {
-  return {
-    provider: PROVIDER,
-    model: provider?.model || 'not initialized',
-    dimensions: provider?.getDimensions() || 0,
-  };
-}
-
-// Backwards compatibility export
-export const EMBEDDING_DIMS = null; // Will be set dynamically after init

@@ -92,14 +92,11 @@ function toVectorLiteral(arr) {
   return `[${arr.join(',')}]`;
 }
 
-// No-op for compat — pgvector has no separate "entity index" concept.
+// No-op — pgvector has no separate "entity index" concept (payload indexes are
+// defined on table creation). Kept so callers can still treat it as a unified
+// post-init step alongside other vector backends.
 export async function ensureEntityIndex() {
   console.log('[pgvector] Payload indexes verified');
-}
-
-export async function initQdrant() {
-  // Shim for backward-compat with imports from index.js. Calls initPgvector.
-  return initPgvector();
 }
 
 // --- CRUD ---
@@ -438,14 +435,6 @@ export async function getCollectionInfo(collection) {
     [col]
   );
   return { points_count: parseInt(result.rows[0].points_count), vectors_count: parseInt(result.rows[0].points_count) };
-}
-
-// Close pool (for graceful shutdown — tests)
-export async function closePgvector() {
-  if (pool) {
-    await pool.end();
-    pool = null;
-  }
 }
 
 export { DECAY_TYPES };
