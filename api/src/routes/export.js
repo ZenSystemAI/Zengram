@@ -20,7 +20,7 @@ exportRouter.get('/', async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 1000, 1), 5000);
     const userOffset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    // Build Qdrant scroll filter
+    // Build vector-store scroll filter
     const filter = {};
     if (client_id) filter.client_id = client_id;
     if (type) filter.type = type;
@@ -114,7 +114,6 @@ exportRouter.post('/import', async (req, res) => {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      // Process each record in the batch sequentially
       for (const record of batch) {
         try {
           const rawContent = record.content || record.text || '';
@@ -151,13 +150,10 @@ exportRouter.post('/import', async (req, res) => {
           if (record.confidence !== undefined && typeof record.confidence !== 'number') { errors++; continue; }
           if (record.access_count !== undefined && typeof record.access_count !== 'number') { errors++; continue; }
 
-          // Scrub credentials (same as POST /memory)
           const content = scrubCredentials(rawContent);
 
-          // Compute content hash from scrubbed content
           const contentHash = hashContent(content);
 
-          // Check for existing memory with same content hash, scoped by tenant + type
           const existing = await findByPayload('content_hash', contentHash, {
             active: true,
             client_id: record.client_id || 'global',
@@ -168,12 +164,10 @@ exportRouter.post('/import', async (req, res) => {
             continue;
           }
 
-          // Embed and generate ID
           const vector = await embed(content, 'store');
           const pointId = record.id || crypto.randomUUID();
           const now = new Date().toISOString();
 
-          // Build full payload
           const payload = {
             text: content,
             type: record.type || 'event',
@@ -197,7 +191,7 @@ exportRouter.post('/import', async (req, res) => {
             consolidated: record.consolidated || false,
           };
 
-          // Upsert to Qdrant
+          // Upsert to the vector store
           await upsertPoint(pointId, vector, payload);
 
           // Keyword index (fire-and-forget)
@@ -221,7 +215,6 @@ exportRouter.post('/import', async (req, res) => {
             }
           } catch (e) { /* non-blocking */ }
 
-          // Write to structured store (matching memory.js patterns)
           if (isStoreAvailable()) {
             try {
               const storeData = {
@@ -248,7 +241,7 @@ exportRouter.post('/import', async (req, res) => {
                 await upsertStatus(storeData);
               }
             } catch (storeErr) {
-              // Qdrant succeeded, structured store failed — log but count as imported
+              // the vector store succeeded, structured store failed — log but count as imported
               console.error('[import] Structured store write failed:', storeErr.message);
             }
           }

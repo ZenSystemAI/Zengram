@@ -1,20 +1,15 @@
-// pgvector.js — vector store implementation using Postgres + pgvector extension.
-//
-// Replaces qdrant.js in v4. API-compatible: routes and services that imported from
-// qdrant.js can switch to this module with no behavior change, except that the
-// single-container Postgres+pgvector deployment has one less service running.
-//
-// Schema: a single `memories` table with promoted hot-path columns (type,
-// source_agent, client_id, content_hash, key, subject, active, created_at)
-// plus a JSONB `payload` column for everything else, and a `vector(N)` column
-// indexed with HNSW for ANN search.
+// Vector store — a single `memories` table in Postgres with promoted hot-path
+// columns (type, source_agent, client_id, content_hash, key, subject, active,
+// created_at), a JSONB `payload` for everything else, and a `vector(N)` column
+// indexed with HNSW for ANN search. Scoring uses the pgvector `<=>` cosine
+// distance operator mapped to a [0,1] similarity.
 
 import pg from 'pg';
 import { getEmbeddingDimensions } from './embedders/interface.js';
 
 const POSTGRES_URL = process.env.POSTGRES_URL || 'postgresql://brain:brain_secret@postgres:5432/shared_brain';
 
-// Memory decay config (same as qdrant.js had)
+// Effective-confidence decay applied on read to fact- and status-type memories.
 const DECAY_FACTOR = parseFloat(process.env.DECAY_FACTOR) || 0.98;
 const DECAY_TYPES = ['fact', 'status'];
 
@@ -193,8 +188,8 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
   }
 
   // Cosine similarity: pgvector '<=>' is cosine distance (0 = identical, 2 = opposite).
-  // We want a similarity score in [0,1] range matching Qdrant's behavior, so: 1 - (distance / 2).
-  // Score threshold 0.3 matches the old Qdrant search_points score_threshold.
+  // We want a similarity score in [0,1] range matching the vector store's behavior, so: 1 - (distance / 2).
+  // Score threshold 0.3 matches the old vector store search_points score_threshold.
   const sql = `
     SELECT id, payload, 1 - (vector <=> $1::vector) / 2 AS score
     FROM memories
@@ -233,7 +228,7 @@ export async function scrollPoints(filter = {}, limit = 50, offset = null, colle
   }
 
   // Offset here is a keyset token: the created_at + id of the last row. Simpler
-  // than Qdrant's opaque token, and stable across writes since (created_at, id)
+  // than the vector store's opaque token, and stable across writes since (created_at, id)
   // is unique enough in practice.
   if (offset) {
     wheres.push(`(created_at, id) < ($${pIdx++}::timestamptz, $${pIdx++})`);
@@ -341,7 +336,7 @@ export async function findByPayload(field, value, extraFilter = {}, limit = 10, 
   return result.rows.map(r => ({ id: r.id, payload: r.payload }));
 }
 
-// --- Effective confidence (pure function, unchanged from qdrant.js) ---
+// --- Effective confidence (pure function) ---
 export function computeEffectiveConfidence(payload) {
   if (!DECAY_TYPES.includes(payload.type)) return payload.confidence || 1.0;
   const baseConfidence = payload.confidence || 1.0;

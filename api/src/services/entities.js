@@ -1,5 +1,5 @@
 // Entity extraction and linking — fast-path (no LLM calls)
-// v3.0 — Confidence-gated extraction. Removed CAPITALIZED_PHRASE_REGEX (60% FP rate).
+// Confidence-gated extraction. Removed CAPITALIZED_PHRASE_REGEX (60% FP rate).
 // Quoted names only match alias cache. Entity staging via confidence field.
 
 const KNOWN_TECH = {
@@ -168,7 +168,7 @@ export function extractEntities(text, clientId, sourceAgent) {
   }
 
   // 5. Quoted/backtick names — ONLY if they match an existing entity in alias cache
-  // v3.0: No longer creates new entities from unknown quoted text (was primary junk source)
+  // Don't create new entities from unknown quoted text — was the primary junk source.
   let match;
   QUOTED_NAME_REGEX.lastIndex = 0;
   while ((match = QUOTED_NAME_REGEX.exec(text)) !== null) {

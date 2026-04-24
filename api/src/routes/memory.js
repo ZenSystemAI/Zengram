@@ -20,9 +20,8 @@ import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 
-// Canonical agent identity — all writes attributed to "claude-code" regardless
-// of which Claude variant or machine. Retired: ti-claude, mini-claude, morpheus,
-// neo, autolab, n8n (stray writes from these are accepted but coerced).
+// Canonical identity — every write is attributed to "claude-code" regardless
+// of what source_agent the caller sends.
 const CANONICAL_AGENT = 'claude-code';
 
 // Shared 404-or-point helper for routes that operate on an existing memory.
@@ -51,15 +50,10 @@ memoryRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
-    // Coerce all writes to canonical identity — per-agent identity was retired.
     source_agent = CANONICAL_AGENT;
-
     if (!client_id) client_id = 'global';
 
-    // Scrub credentials
     const cleanContent = scrubCredentials(content);
-
-    // Generate content hash for dedup
     const contentHash = hashContent(cleanContent);
 
     // --- Deduplication check ---
@@ -94,7 +88,7 @@ memoryRouter.post('/', async (req, res) => {
     }
 
     if (type === 'fact' && req.body.key) {
-      // Find existing active fact with same key (targeted Qdrant query)
+      // Find existing active fact with same key (targeted vector-store query)
       const matches = await findByPayload('key', req.body.key, { active: true, type: 'fact' }, 1);
       if (matches.length > 0) {
         supersedesId = matches[0].id;
@@ -107,7 +101,7 @@ memoryRouter.post('/', async (req, res) => {
         deactivateMemory(matches[0].id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
       }
     } else if (type === 'status' && req.body.subject) {
-      // Find existing active status with same subject (targeted Qdrant query)
+      // Find existing active status with same subject (targeted vector-store query)
       const matches = await findByPayload('subject', req.body.subject, { active: true, type: 'status' }, 1);
       if (matches.length > 0) {
         supersedesId = matches[0].id;
@@ -121,7 +115,6 @@ memoryRouter.post('/', async (req, res) => {
       }
     }
 
-    // Build payload
     const payload = {
       text: cleanContent,
       type,
@@ -151,9 +144,9 @@ memoryRouter.post('/', async (req, res) => {
       } : {}),
     };
 
-    // v3.0: Compress-at-ingestion for events (session logs are verbose, compress for retrieval)
-    // Stores raw in payload.text, compressed in payload.text_compressed
-    // Embeds the FULL text (semantic richness), displays compressed in compact/index format
+    // Compress-at-ingestion for long event memories. Store raw text in
+    // payload.text for semantic-rich embedding; store a trimmed version in
+    // payload.text_compressed for compact/index formats at read time.
     if (type === 'event' && cleanContent.length > 400) {
       const lines = cleanContent.split('\n');
       const title = lines.find(l => l.trim() && !l.trim().startsWith('#')) || lines[0] || '';
@@ -197,7 +190,7 @@ memoryRouter.post('/', async (req, res) => {
       console.error('[memory:relevance] Scoring failed (non-blocking):', e.message);
     }
 
-    // Store in Qdrant
+    // Store in the vector store
     await upsertPoint(pointId, vector, payload);
 
     // Index in keyword search (fire-and-forget)
@@ -220,7 +213,6 @@ memoryRouter.post('/', async (req, res) => {
       });
     }
 
-    // Store in structured database (if configured)
     const storeData = {
       content: cleanContent,
       source_agent,
@@ -248,8 +240,8 @@ memoryRouter.post('/', async (req, res) => {
           storeResult = await upsertStatus(storeData);
         }
       } catch (storeErr) {
-        // Qdrant succeeded, structured store failed — log but don't fail the request
-        console.error('[store] Write failed (Qdrant succeeded):', storeErr.message);
+        // the vector store succeeded, structured store failed — log but don't fail the request
+        console.error('[store] Write failed (vector store succeeded):', storeErr.message);
       }
     }
 
@@ -286,14 +278,14 @@ memoryRouter.get('/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing required query parameter: q' });
     }
 
-    // --- Fix 7: Query expansion / domain inference ---
+    // --- Query expansion / domain inference ---
     const queryAnalysis = analyzeQuery(q);
     let searchQuery = q;
     if (queryAnalysis.isVague && queryAnalysis.expansions) {
       searchQuery = expandQuery(q, queryAnalysis.expansions);
     }
 
-    // --- Fix 6: Temporal date-range filtering ---
+    // --- Temporal date-range filtering ---
     const temporalResult = resolveTemporalQuery(q, reference_date || at_time);
 
     const filter = {};
@@ -321,7 +313,7 @@ memoryRouter.get('/search', async (req, res) => {
       rangeFilters.push({ key: 'valid_from', range: { lte: at_time } });
     }
 
-    // Fix 6: Add date-range filter from temporal resolution or explicit params
+    // Date-range filter from temporal resolution or explicit params
     const effectiveDateFrom = date_from || temporalResult.dateFrom;
     const effectiveDateTo = date_to || temporalResult.dateTo;
     if (effectiveDateFrom) {
@@ -332,7 +324,7 @@ memoryRouter.get('/search', async (req, res) => {
     }
 
     // --- Multi-path retrieval ---
-    const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is Qdrant-only
+    const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is vector-store-only
     const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
 
     // Always run vector search (use expanded query for better coverage)
@@ -420,15 +412,15 @@ memoryRouter.get('/search', async (req, res) => {
       const effectiveConfidence = computeEffectiveConfidence(r.payload);
       const p = r.payload;
       const accessBoost = 1 + (0.3 * Math.log2((p.access_count || 0) + 1));
-      // Fix 6: Temporal proximity boost — memories closer to reference date score higher
+      // Temporal proximity boost — memories closer to reference date score higher
       const tempBoost = (temporalResult.isTemporalQuery && refDateForBoost)
         ? temporalProximityBoost(p.created_at, refDateForBoost)
         : 1.0;
-      // v3.0: Importance weighting — critical memories rank higher than low-importance ones
+      // Importance weighting — critical memories rank higher than low-importance ones
       const importanceWeight = IMPORTANCE_WEIGHTS[p.importance] || 0.7;
       const effectiveScore = +(((r.score || 0.5) * effectiveConfidence * accessBoost * tempBoost * importanceWeight)).toFixed(4);
 
-      // v3.0: Index format — minimal tokens, IDs + one-line summary for progressive disclosure
+      // Index format — minimal tokens, IDs + one-line summary for progressive disclosure
       if (isIndex) {
         const text = p.text_compressed || p.text || '';
         const firstLine = text.split('\n').find(l => l.trim()) || text;
@@ -474,10 +466,9 @@ memoryRouter.get('/search', async (req, res) => {
       return base;
     });
 
-    // Re-sort by effective_score
     results.sort((a, b) => b.effective_score - a.effective_score);
 
-    // --- Fix 5: Session deduplication in re-ranking ---
+    // --- Session deduplication in re-ranking ---
     // Ensure results span unique sessions rather than clustering around the most similar one.
     // Parse session_id from metadata or content header.
     if (results.length > 3) {
@@ -677,7 +668,6 @@ memoryRouter.patch('/:id', async (req, res) => {
       updatedPayload.text = cleanContent;
       updatedPayload.content_hash = contentHash;
 
-      // Re-extract entities
       let extractedEntities = [];
       try {
         extractedEntities = extractEntities(cleanContent, point.payload.client_id || 'global', point.payload.source_agent);
@@ -690,12 +680,10 @@ memoryRouter.patch('/:id', async (req, res) => {
         console.error('[memory:update:entities] Extraction failed (non-blocking):', e.message);
       }
 
-      // Re-embed and upsert full point (vector + merged payload)
       const vector = await embed(cleanContent, 'store');
       const mergedPayload = { ...point.payload, ...updatedPayload };
       await upsertPoint(id, vector, mergedPayload);
 
-      // Re-index in keyword search
       if (isKeywordSearchAvailable()) {
         indexMemory(id, cleanContent, {
           client_id: point.payload.client_id || 'global',
@@ -704,7 +692,6 @@ memoryRouter.patch('/:id', async (req, res) => {
         }).catch(e => console.error('[memory:update:keyword-index]', e.message));
       }
 
-      // Re-link entities (fire-and-forget)
       if (isEntityStoreAvailable() && extractedEntities.length > 0) {
         Promise.resolve().then(async () => {
           try {

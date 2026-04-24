@@ -95,7 +95,6 @@ export async function runConsolidation() {
   const startTime = Date.now();
 
   try {
-    // Pull ALL unconsolidated memories (paginated)
     const points = [];
     let scrollOffset = null;
     do {
@@ -111,7 +110,6 @@ export async function runConsolidation() {
       return { status: 'complete', memories_processed: 0, message: 'No unconsolidated memories found' };
     }
 
-    // Group by client_id for focused analysis
     const groups = {};
     for (const point of points) {
       const clientId = point.payload.client_id || 'global';

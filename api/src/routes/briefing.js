@@ -22,7 +22,6 @@ briefingRouter.get('/', async (req, res) => {
       });
     }
 
-    // Get recent events from Qdrant (paginated scroll)
     const scrollLimit = Math.min(Math.max(parseInt(limitParam) || 100, 1), 500);
     const filter = { created_after: since };
     const PAGE_SIZE = 100;
@@ -58,7 +57,6 @@ briefingRouter.get('/', async (req, res) => {
     }
     const entitiesMentioned = Object.values(entityCounts).sort((a, b) => b.count - a.count);
 
-    // Build summary (always included)
     const summary = {
       total_entries: relevantPoints.length,
       total_in_period: points.length,
@@ -74,7 +72,6 @@ briefingRouter.get('/', async (req, res) => {
       const p = point.payload;
       const confidence = computeEffectiveConfidence(p);
 
-      // Build entry based on format
       let entry;
       if (format === 'summary') {
         // Minimal: first line of content only (headline)
@@ -133,7 +130,6 @@ briefingRouter.get('/', async (req, res) => {
       arr.sort(sortByImportanceAndDate);
     }
 
-    // Build response based on format
     const briefing = {
       since,
       format,

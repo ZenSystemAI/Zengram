@@ -1,9 +1,7 @@
-// Query expansion: infers topic domains from vague queries and generates broader search terms.
-// Addresses the "semantic gap" where questions like "recommend a show" don't match
-// memories about "John Mulaney stand-up specials on Netflix."
-//
-// v2.5.1 — Added preference keyword boost and multi-query reformulation for
-// preference-style queries (benchmark showed 10% on preferences with v2.4).
+// Query expansion: infers topic domains from vague queries and generates
+// broader search terms. Addresses the "semantic gap" where a question like
+// "recommend a show" doesn't embedding-match memories about a specific stand-up
+// special or Netflix series.
 
 // Preference indicator words — used for BM25 preference path
 const PREFERENCE_INDICATORS = [

@@ -18,7 +18,7 @@ const MAX_CONTENT_LENGTH = 5000;
 
 /**
  * Score an incoming memory for relevance.
- * Called after entity extraction and embedding, before Qdrant upsert.
+ * Called after entity extraction and embedding, before vector upsert.
  *
  * @param {object} params
  * @param {string} params.content - Cleaned content text
@@ -88,7 +88,7 @@ export async function scoreRelevance({ content, type, importance, source_agent, 
       signals.near_duplicate = false;
     }
   } catch (e) {
-    // Non-blocking — skip near-duplicate check if Qdrant is slow
+    // Non-blocking — skip near-duplicate check if the vector store is slow
     signals.near_duplicate = 'skipped';
   }
 
@@ -114,7 +114,7 @@ export async function scoreRelevance({ content, type, importance, source_agent, 
 
 /**
  * Build payload fields for the relevance score.
- * Returns object to spread into the Qdrant payload.
+ * Returns object to spread into the vector-store payload.
  */
 export function relevancePayloadFields(result) {
   return {

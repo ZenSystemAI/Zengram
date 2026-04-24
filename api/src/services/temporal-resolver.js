@@ -1,9 +1,6 @@
-// Temporal resolver: detects time references in queries and converts to date ranges.
-// Used by the search handler to add temporal filtering and boost.
-//
-// v2.5.1 — Added "yesterday", "today", "this week/month/year", "recently" patterns.
-// Added ordering direction for first/earliest/latest queries.
-// Tightened "last month/year" ranges (were too wide).
+// Temporal resolver: detects time references in a query and converts them to
+// date ranges + optional proximity ordering, so the search handler can filter
+// and rerank by recency.
 
 /**
  * Detect temporal patterns in a query and resolve to date ranges.

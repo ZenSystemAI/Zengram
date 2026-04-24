@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
-// v4: single admin key. Per-agent identity was retired — all writes
-// attribute to "claude-code" via the memory route handler.
+// Single admin key. Callers are not identified per-agent; all writes are
+// attributed to "claude-code" inside the memory route handler.
 const ADMIN_KEY = process.env.BRAIN_API_KEY;
 
 // Rate limiting: track failed auth attempts per IP
