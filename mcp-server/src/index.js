@@ -41,6 +41,12 @@ async function apiRequest(path, options = {}) {
   }
 }
 
+// Shared across tool inputSchemas. Kept local to the MCP module rather than
+// cross-imported from the API package so this stays publishable standalone.
+const TYPE_ENUM = ['event', 'fact', 'decision', 'status'];
+const IMPORTANCE_ENUM = ['critical', 'high', 'medium', 'low'];
+const KNOWLEDGE_CATEGORY_ENUM = ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'];
+
 const server = new Server(
   { name: 'zengram', version: pkg.version },
   { capabilities: { tools: {} } }
@@ -56,7 +62,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           type: {
             type: 'string',
-            enum: ['event', 'fact', 'decision', 'status'],
+            enum: TYPE_ENUM,
             description: 'Memory type. event=something happened (append-only), fact=persistent knowledge (upsertable by key), decision=choice made and why (append-only), status=current state (update in place by subject)',
           },
           content: {
@@ -78,7 +84,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           importance: {
             type: 'string',
-            enum: ['critical', 'high', 'medium', 'low'],
+            enum: IMPORTANCE_ENUM,
             description: 'How important is this memory. Default: medium',
           },
           key: {
@@ -95,7 +101,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           knowledge_category: {
             type: 'string',
-            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            enum: KNOWLEDGE_CATEGORY_ENUM,
             description: 'Domain category: brand=voice/identity, strategy=plans/positioning, meeting=call takeaways, content=published work, technical=hosting/CMS/SEO issues, relationship=contacts/preferences, general=default',
           },
           valid_from: {
@@ -122,7 +128,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           type: {
             type: 'string',
-            enum: ['event', 'fact', 'decision', 'status'],
+            enum: TYPE_ENUM,
             description: 'Filter by memory type (optional)',
           },
           source_agent: {
@@ -148,7 +154,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           knowledge_category: {
             type: 'string',
-            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            enum: KNOWLEDGE_CATEGORY_ENUM,
             description: 'Filter by knowledge category (optional)',
           },
           at_time: {
@@ -304,12 +310,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           importance: {
             type: 'string',
-            enum: ['critical', 'high', 'medium', 'low'],
+            enum: IMPORTANCE_ENUM,
             description: 'New importance level',
           },
           knowledge_category: {
             type: 'string',
-            enum: ['brand', 'strategy', 'meeting', 'content', 'technical', 'relationship', 'general'],
+            enum: KNOWLEDGE_CATEGORY_ENUM,
             description: 'New knowledge category',
           },
           metadata: {
@@ -327,7 +333,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: 'object',
         properties: {
           client_id: { type: 'string', description: 'Filter by client (optional)' },
-          type: { type: 'string', enum: ['event', 'fact', 'decision', 'status'], description: 'Filter by type (optional)' },
+          type: { type: 'string', enum: TYPE_ENUM, description: 'Filter by type (optional)' },
           since: { type: 'string', description: 'ISO 8601 timestamp — only memories after this time (optional)' },
           limit: { type: 'number', description: 'Max memories to export (default 500). Use to prevent oversized responses.' },
         },

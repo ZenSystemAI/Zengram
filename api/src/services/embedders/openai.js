@@ -13,6 +13,9 @@ export class OpenAIEmbedder {
       input: text,
       dimensions: this.dimensions,
     });
+    if (!Array.isArray(response?.data?.[0]?.embedding)) {
+      throw new Error(`OpenAI embed returned unexpected shape: ${JSON.stringify(response).slice(0, 200)}`);
+    }
     return response.data[0].embedding;
   }
 

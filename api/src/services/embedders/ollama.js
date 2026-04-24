@@ -30,6 +30,9 @@ export class OllamaEmbedder {
 
     const data = await response.json();
     // Ollama returns { embeddings: [[...]] } for single input
+    if (!Array.isArray(data?.embeddings?.[0])) {
+      throw new Error(`Ollama embed returned unexpected shape: ${JSON.stringify(data).slice(0, 200)}`);
+    }
     return data.embeddings[0];
   }
 

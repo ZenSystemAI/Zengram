@@ -11,7 +11,7 @@ import {
 } from '../services/stores/interface.js';
 import { scrubCredentials, scrubObject } from '../services/scrub.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
-import { validateMemoryInput } from '../middleware/validate.js';
+import { validateMemoryInput, validateContent, validateImportance, validateMetadata, VALID_KNOWLEDGE_CATEGORIES } from '../middleware/validate.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
@@ -628,6 +628,21 @@ memoryRouter.patch('/:id', async (req, res) => {
     // Must provide at least one field to update
     if (!content && !importance && !knowledge_category && !metadata) {
       return res.status(400).json({ error: 'Must provide at least one field to update: content, importance, knowledge_category, metadata' });
+    }
+
+    // Reuse the same validators POST /memory runs. Previously this endpoint
+    // persisted whatever shape the caller sent.
+    if (content !== undefined) {
+      const e = validateContent(content); if (e) return res.status(400).json({ error: e });
+    }
+    if (importance !== undefined) {
+      const e = validateImportance(importance); if (e) return res.status(400).json({ error: e });
+    }
+    if (knowledge_category !== undefined && !VALID_KNOWLEDGE_CATEGORIES.includes(knowledge_category)) {
+      return res.status(400).json({ error: `Invalid knowledge_category: ${knowledge_category}. Must be one of: ${VALID_KNOWLEDGE_CATEGORIES.join(', ')}` });
+    }
+    if (metadata !== undefined) {
+      const e = validateMetadata(metadata); if (e) return res.status(400).json({ error: e });
     }
 
     // Fetch existing point

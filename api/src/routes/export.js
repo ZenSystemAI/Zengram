@@ -123,18 +123,33 @@ exportRouter.post('/import', async (req, res) => {
             continue;
           }
 
-          // Validate input (same rules as POST /memory)
+          // Validate with the full POST /memory rule set (previously only a
+          // 5-field subset ran, letting malformed entities/confidence/
+          // observed_by slip through into the payload).
           const validationError = validateMemoryInput({
             type: record.type || 'event',
             content: rawContent,
             source_agent: record.source_agent || 'import',
             importance: record.importance,
             client_id: record.client_id,
+            knowledge_category: record.knowledge_category,
+            metadata: record.metadata,
+            key: record.key,
+            subject: record.subject,
+            status_value: record.status_value,
+            valid_from: record.valid_from,
+            valid_to: record.valid_to,
           });
           if (validationError) {
             errors++;
             continue;
           }
+
+          // Shape guards for fields exported-format passes through untyped.
+          if (record.entities !== undefined && !Array.isArray(record.entities)) { errors++; continue; }
+          if (record.observed_by !== undefined && !Array.isArray(record.observed_by)) { errors++; continue; }
+          if (record.confidence !== undefined && typeof record.confidence !== 'number') { errors++; continue; }
+          if (record.access_count !== undefined && typeof record.access_count !== 'number') { errors++; continue; }
 
           // Scrub credentials (same as POST /memory)
           const content = scrubCredentials(rawContent);

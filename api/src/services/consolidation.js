@@ -8,6 +8,7 @@ import {
 } from './stores/interface.js';
 import { isKeywordSearchAvailable, indexMemory } from './keyword-search.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
+import { VALID_IMPORTANCE } from '../middleware/validate.js';
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
 
@@ -280,7 +281,6 @@ async function consolidateBatch(points, clientId) {
     );
   }
 
-  const VALID_IMPORTANCE = ['critical', 'high', 'medium', 'low'];
   const sanitizeImportance = (val) => VALID_IMPORTANCE.includes(val) ? val : 'medium';
 
   const now = new Date().toISOString();
@@ -290,6 +290,8 @@ async function consolidateBatch(points, clientId) {
   let skipped = 0;
   if (result.merged_facts?.length > 0) {
     for (const fact of result.merged_facts) {
+      if (typeof fact?.content !== 'string' || !fact.content.trim()) continue;
+      if (fact.source_memories && !Array.isArray(fact.source_memories)) fact.source_memories = [];
       const content = fact.content;
       const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 
@@ -431,6 +433,8 @@ async function consolidateBatch(points, clientId) {
   // Store compressed summaries as new fact-type memories (without superseding source memories)
   if (result.compressed_summaries?.length > 0) {
     for (const summary of result.compressed_summaries) {
+      if (typeof summary?.content !== 'string' || !summary.content.trim()) continue;
+      if (summary.source_memories && !Array.isArray(summary.source_memories)) summary.source_memories = [];
       const content = summary.content;
       const contentHash = crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 

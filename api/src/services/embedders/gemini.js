@@ -44,6 +44,9 @@ export class GeminiEmbedder {
     }
 
     const data = await response.json();
+    if (!Array.isArray(data?.embedding?.values)) {
+      throw new Error(`Gemini embed returned unexpected shape: ${JSON.stringify(data).slice(0, 200)}`);
+    }
     return data.embedding.values;
   }
 
