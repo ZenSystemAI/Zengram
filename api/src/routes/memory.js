@@ -91,7 +91,7 @@ memoryRouter.post('/', async (req, res) => {
           superseded_at: now,
           valid_to: now, // temporal: old fact no longer valid as of supersede time
         });
-        deactivateMemory(matches[0].id).catch(() => {});
+        deactivateMemory(matches[0].id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
       }
     } else if (type === 'status' && req.body.subject) {
       // Find existing active status with same subject (targeted Qdrant query)
@@ -104,7 +104,7 @@ memoryRouter.post('/', async (req, res) => {
           superseded_at: now,
           valid_to: now, // temporal: old status no longer valid as of supersede time
         });
-        deactivateMemory(matches[0].id).catch(() => {});
+        deactivateMemory(matches[0].id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
       }
     }
 
@@ -291,15 +291,13 @@ memoryRouter.get('/search', async (req, res) => {
     if (kc) filter.knowledge_category = kc;
     if (include_superseded !== 'true') filter.active = true;
 
-    // Entity filter — resolve alias to canonical name, then filter via Qdrant payload
+    // Entity filter — resolve alias to canonical name, then filter via payload.
     const nestedFilters = [];
     if (entity) {
       let entityName = entity;
       if (isEntityStoreAvailable()) {
-        try {
-          const found = await findEntity(entity);
-          if (found) entityName = found.canonical_name;
-        } catch (e) { /* use original name */ }
+        const found = await findEntity(entity);
+        if (found) entityName = found.canonical_name;
       }
       nestedFilters.push({ arrayField: 'entities', key: 'name', value: entityName });
     }
@@ -532,31 +530,27 @@ memoryRouter.get('/search', async (req, res) => {
         });
     }
 
-    // --- Fix 7 part 2: Retry with broader terms on zero results ---
+    // Retry with broader, keyword-only terms when the full query returned nothing.
     if (results.length === 0 && searchQuery === q) {
-      // Try extracted key terms
       const broader = extractSearchTerms(q);
       if (broader && broader.length > 3) {
-        try {
-          const retryVector = await embed(broader, 'search');
-          const retryResults = await searchPoints(retryVector, filter, maxResults, nestedFilters, rangeFilters);
-          if (retryResults.length > 0) {
-            // Re-score and return
-            for (const r of retryResults) {
-              const ec = computeEffectiveConfidence(r.payload);
-              const ab = 1 + (0.3 * Math.log2((r.payload.access_count || 0) + 1));
-              r._retryScore = +((r.score * ec * ab)).toFixed(4);
-            }
-            retryResults.sort((a, b) => b._retryScore - a._retryScore);
-            const retryFormatted = retryResults.slice(0, maxResults).map(r => ({
-              id: r.id, score: r.score, effective_score: r._retryScore, ...r.payload,
-            }));
-            return res.json({
-              query: q, expanded_query: broader, count: retryFormatted.length, results: retryFormatted,
-              retry: true,
-            });
+        const retryVector = await embed(broader, 'search');
+        const retryResults = await searchPoints(retryVector, filter, maxResults, nestedFilters, rangeFilters);
+        if (retryResults.length > 0) {
+          for (const r of retryResults) {
+            const ec = computeEffectiveConfidence(r.payload);
+            const ab = 1 + (0.3 * Math.log2((r.payload.access_count || 0) + 1));
+            r._retryScore = +((r.score * ec * ab)).toFixed(4);
           }
-        } catch (e) { /* retry failed, return empty */ }
+          retryResults.sort((a, b) => b._retryScore - a._retryScore);
+          const retryFormatted = retryResults.slice(0, maxResults).map(r => ({
+            id: r.id, score: r.score, effective_score: r._retryScore, ...r.payload,
+          }));
+          return res.json({
+            query: q, expanded_query: broader, count: retryFormatted.length, results: retryFormatted,
+            retry: true,
+          });
+        }
       }
     }
 
@@ -749,7 +743,7 @@ memoryRouter.delete('/:id', async (req, res) => {
       deletion_reason: reason || null,
     });
 
-    deactivateMemory(id).catch(() => {});
+    deactivateMemory(id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
 
     console.log(`[memory:delete] Memory ${id} soft-deleted${reason ? ': ' + reason : ''}`);
 

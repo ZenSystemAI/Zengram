@@ -10,7 +10,9 @@ statsRouter.get('/', async (req, res) => {
   try {
     const stats = await getMemoryStats();
 
-    // Sample decayed memories (facts/statuses with low effective confidence)
+    // Best-effort sub-stats — a failure on any of these shouldn't blow up the
+    // dashboard (it's a health surface, not a transactional path), but we log
+    // so the failure is observable on the server side.
     let decayedCount = 0;
     try {
       const recentFacts = await scrollPoints({ type: 'fact' }, 100);
@@ -20,23 +22,19 @@ statsRouter.get('/', async (req, res) => {
         if (eff < 0.5) decayedCount++;
       }
     } catch (e) {
-      // Non-critical
+      console.warn('[stats:decayed]', e.message);
     }
 
-    // Entity stats
     let entityStats = null;
     if (isEntityStoreAvailable()) {
-      try {
-        entityStats = await getEntityStats();
-      } catch (e) { /* non-critical */ }
+      try { entityStats = await getEntityStats(); }
+      catch (e) { console.warn('[stats:entities]', e.message); }
     }
 
-    // Keyword search stats
     let keywordIndexCount = 0;
     if (isKeywordSearchAvailable()) {
-      try {
-        keywordIndexCount = await getKeywordIndexCount();
-      } catch (e) { /* non-critical */ }
+      try { keywordIndexCount = await getKeywordIndexCount(); }
+      catch (e) { console.warn('[stats:keyword-index]', e.message); }
     }
 
     res.json({

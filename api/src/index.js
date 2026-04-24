@@ -72,13 +72,14 @@ async function start() {
     await initStore();
     initKeywordSearch(_getStoreInstance());
 
-    // Load entity alias cache for fast-path extraction
+    // Load entity alias cache for fast-path extraction. A clean empty database
+    // just returns []; any real error (connection, schema drift) must be loud.
     if (isEntityStoreAvailable()) {
       try {
         const aliases = await loadAllAliases();
         loadAliasCache(aliases);
       } catch (e) {
-        console.log('[zengram] Entity alias cache: starting empty (first run)');
+        console.warn('[zengram] Alias cache load failed:', e.message);
       }
     }
 

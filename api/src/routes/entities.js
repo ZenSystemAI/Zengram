@@ -265,17 +265,23 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
     `, [primary.id, secondary.id]);
     const movedLinks = moveResult.rowCount || 0;
 
-    // Move relationships from secondary to primary
+    // Move relationships from secondary to primary. Some moves will collide
+    // with an existing (source, target, type) row on the primary side — let
+    // the unique-constraint violations (SQLSTATE 23505) slide, but surface
+    // any other error through the route's outer handler.
+    const ignoreUnique = (e) => {
+      if (e.code !== '23505') throw e;
+    };
     await store.pool.query(`
       UPDATE entity_relationships SET source_entity_id = $1
       WHERE source_entity_id = $2
       AND target_entity_id != $1
-    `, [primary.id, secondary.id]).catch(() => {});
+    `, [primary.id, secondary.id]).catch(ignoreUnique);
     await store.pool.query(`
       UPDATE entity_relationships SET target_entity_id = $1
       WHERE target_entity_id = $2
       AND source_entity_id != $1
-    `, [primary.id, secondary.id]).catch(() => {});
+    `, [primary.id, secondary.id]).catch(ignoreUnique);
 
     // Create alias from secondary name
     await store.pool.query(

@@ -63,11 +63,10 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_statuses_client ON statuses(client_id);
     `);
 
-    // Migrate: add knowledge_category to existing tables (safe if already exists)
+    // Idempotent column backfill — ADD COLUMN IF NOT EXISTS is a no-op when
+    // the column is already present.
     for (const table of ['events', 'facts', 'statuses']) {
-      try {
-        await this.pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS knowledge_category TEXT DEFAULT 'general'`);
-      } catch (_) { /* column already exists */ }
+      await this.pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS knowledge_category TEXT DEFAULT 'general'`);
     }
 
     await this.pool.query(`

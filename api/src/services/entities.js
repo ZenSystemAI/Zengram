@@ -253,9 +253,7 @@ export async function linkExtractedEntities(entities, memoryId, storeFns) {
     const uniqueIds = [...new Set(resolvedIds)];
     for (let i = 0; i < uniqueIds.length; i++) {
       for (let j = i + 1; j < uniqueIds.length; j++) {
-        try {
-          await createRelationship(uniqueIds[i], uniqueIds[j], 'co_occurrence');
-        } catch (e) {}
+        await createRelationship(uniqueIds[i], uniqueIds[j], 'co_occurrence');
       }
     }
   }

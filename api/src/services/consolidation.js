@@ -11,6 +11,12 @@ import { loadAliasCache, addToAliasCache } from './entities.js';
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
 
+// Thrown when the consolidation LLM returns unparseable JSON. The batch runner
+// leaves the source memories unconsolidated so the next run can retry.
+class LlmJsonError extends Error {
+  constructor(msg) { super(msg); this.name = 'LlmJsonError'; }
+}
+
 let lastRunAt = null;
 let isRunning = false;
 
@@ -133,12 +139,16 @@ export async function runConsolidation() {
           totalSkipped += result.skipped || 0;
           totalCategoriesUpdated += result.categories_updated || 0;
 
-          // Mark batch as consolidated
           const ids = batch.map(p => p.id);
           await updatePointPayload(ids, { consolidated: true, consolidated_at: new Date().toISOString() });
         } catch (err) {
           errors.push({ client_id: clientId, batch_start: i, error: err.message });
-          console.error(`[consolidation] Batch error for ${clientId}:`, err.message);
+          if (err instanceof LlmJsonError) {
+            // Leave the batch unmarked so the next consolidation run retries it.
+            console.error(`[consolidation] Batch for ${clientId} left unconsolidated due to LLM JSON error`);
+          } else {
+            console.error(`[consolidation] Batch error for ${clientId}:`, err.message);
+          }
         }
       }
     }
@@ -214,22 +224,22 @@ async function consolidateBatch(points, clientId) {
   const prompt = CONSOLIDATION_PROMPT + memoriesText;
   const responseText = await complete(prompt);
 
+  // Parse the LLM response. Malformed JSON throws LlmJsonError so the batch
+  // runner can skip the 'consolidated: true' write and retry on the next run.
   let result;
   try {
-    // Strip markdown code fences the LLM may wrap around the JSON
     let jsonText = responseText.trim();
     const fenceMatch = jsonText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
     if (fenceMatch) jsonText = fenceMatch[1].trim();
     result = JSON.parse(jsonText);
   } catch (e) {
     console.error('[consolidation] LLM returned invalid JSON:', responseText.slice(0, 300));
-    return { merged: 0, contradictions: 0, connections: 0, compressed_summaries: 0 };
+    throw new LlmJsonError('invalid JSON from consolidation LLM');
   }
 
-  // Validate top-level structure
   if (typeof result !== 'object' || result === null || Array.isArray(result)) {
     console.error('[consolidation] LLM returned non-object JSON');
-    return { merged: 0, contradictions: 0, connections: 0, compressed_summaries: 0 };
+    throw new LlmJsonError('non-object JSON from consolidation LLM');
   }
 
   // Validate: strip any memory IDs not in the current batch
@@ -344,18 +354,14 @@ async function consolidateBatch(points, clientId) {
         }).catch(e => console.error('[consolidation:store-fact]', e.message));
       }
 
-      // Supersede source memories — the merged fact replaces them
+      // Supersede source memories — the merged fact replaces them.
       if (fact.source_memories?.length > 0) {
         for (const sourceId of fact.source_memories) {
-          try {
-            await updatePointPayload(sourceId, {
-              active: false,
-              superseded_by: mergedId,
-              superseded_at: now,
-            });
-          } catch (e) {
-            // Source memory might not exist — skip
-          }
+          await updatePointPayload(sourceId, {
+            active: false,
+            superseded_by: mergedId,
+            superseded_at: now,
+          });
         }
       }
       merged++;
@@ -409,18 +415,14 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Update connection metadata on existing points
+  // Update connection metadata on existing points.
   if (result.connections?.length > 0) {
     for (const connection of result.connections) {
       for (const memoryId of (connection.memories || [])) {
-        try {
-          await updatePointPayload(memoryId, {
-            connections: connection.memories.filter(id => id !== memoryId),
-            connection_description: connection.relationship,
-          });
-        } catch (e) {
-          // Point might not exist — skip
-        }
+        await updatePointPayload(memoryId, {
+          connections: connection.memories.filter(id => id !== memoryId),
+          connection_description: connection.relationship,
+        });
       }
       connections++;
     }
@@ -493,17 +495,13 @@ async function consolidateBatch(points, clientId) {
         }).catch(e => console.error('[consolidation:store-fact]', e.message));
       }
 
-      // Mark source memories as consolidated (but don't supersede them)
+      // Mark source memories as consolidated without superseding them.
       if (summary.source_memories?.length > 0) {
         for (const sourceId of summary.source_memories) {
-          try {
-            await updatePointPayload(sourceId, {
-              consolidated: true,
-              consolidated_at: now,
-            });
-          } catch (e) {
-            // Source memory might not exist — skip
-          }
+          await updatePointPayload(sourceId, {
+            consolidated: true,
+            consolidated_at: now,
+          });
         }
       }
 
@@ -515,18 +513,13 @@ async function consolidateBatch(points, clientId) {
   let categoriesUpdated = 0;
   if (result.knowledge_categories?.length > 0) {
     for (const kc of result.knowledge_categories) {
-      try {
-        // Find the point in the batch to check current knowledge_category
-        const point = points.find(p => p.id === kc.memory_id);
-        const currentCategory = point?.payload?.knowledge_category;
-
-        // Only reclassify if current is null, empty, or 'general'
-        if (!currentCategory || currentCategory === 'general' || currentCategory === '') {
-          await updatePointPayload(kc.memory_id, { knowledge_category: kc.suggested_category });
-          categoriesUpdated++;
-        }
-      } catch (e) {
-        // Point might not exist — skip
+      // Only reclassify when the LLM's suggestion strengthens the category
+      // (current is unset or generic).
+      const point = points.find(p => p.id === kc.memory_id);
+      const currentCategory = point?.payload?.knowledge_category;
+      if (!currentCategory || currentCategory === 'general' || currentCategory === '') {
+        await updatePointPayload(kc.memory_id, { knowledge_category: kc.suggested_category });
+        categoriesUpdated++;
       }
     }
     if (categoriesUpdated > 0) {
