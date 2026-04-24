@@ -1,0 +1,24 @@
+# Production override for G6 deployment
+# Usage: docker compose -f docker-compose.yml -f docker-compose.production.yml --profile postgres up -d
+#
+# Adds:
+#   - Baserow network access for client resolver
+#   - External network binding (0.0.0.0) for LAN agent access
+#   - Postgres always enabled
+
+services:
+  memory-api:
+    networks:
+      default:
+        aliases:
+          - shared-brain-api  # backward compat: MCP Hub uses this hostname
+      baserow:
+
+  postgres:
+    profiles: []  # Always start in production (no profile gate)
+
+networks:
+  default:
+  baserow:
+    external: true
+    name: baserow-stack_default
