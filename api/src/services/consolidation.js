@@ -11,14 +11,13 @@ import { loadAliasCache, addToAliasCache } from './entities.js';
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
 
-// Consolidation run history (in-memory, persisted via Qdrant events)
 let lastRunAt = null;
 let isRunning = false;
 
-// Job tracking for async consolidation
-const jobs = new Map(); // jobId → { status, startedAt, result, error }
+// jobId → { status, startedAt, result, error }
+const jobs = new Map();
 
-const CONSOLIDATION_PROMPT = `You are analyzing a batch of agent memories from a shared brain system. These memories were stored by different AI agents working on different machines.
+const CONSOLIDATION_PROMPT = `You are analyzing a batch of memories from Claude Code sessions. These memories were stored over time across many machines and tasks.
 
 Analyze the following memories and produce a JSON response with these fields:
 

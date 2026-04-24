@@ -1,8 +1,8 @@
 {
   "name": "@zensystemai/zengram-mcp",
-  "version": "2.4.0",
+  "version": "4.1.0",
   "type": "module",
-  "description": "Persistent multi-path memory for AI agents — vector + BM25 keyword + entity graph search with RRF fusion, credential scrubbing, auto-consolidation, multi-backend storage (Qdrant + SQLite/Postgres)",
+  "description": "Persistent memory for AI agents — pgvector + BM25 keyword search with RRF fusion, credential scrubbing, auto-consolidation.",
   "main": "src/index.js",
   "bin": {
     "zengram-mcp": "src/index.js"
@@ -20,19 +20,15 @@
     "memory",
     "ai",
     "agent",
-    "multi-agent",
     "llm",
     "semantic-search",
     "bm25",
     "keyword-search",
     "reciprocal-rank-fusion",
     "rrf",
-    "knowledge-graph",
     "entity-extraction",
     "persistent-memory",
-    "cross-agent",
-    "knowledge-base",
-    "qdrant",
+    "pgvector",
     "embeddings",
     "credential-scrubbing"
   ],

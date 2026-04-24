@@ -409,25 +409,25 @@ export async function batchUpdateEntityType(entityName, oldType, newType) {
   return { total_updated: totalUpdated, total_scanned: result.rows.length };
 }
 
-// --- Collection management (compat shims) ---
-// In pgvector, collections are just a `collection` column value. No physical creation needed.
-export async function createQdrantCollection(collectionName) {
-  // No-op: any insert with a new collection value effectively creates it.
+// --- Collection management ---
+// Collections are a `collection` column value on the memories row, not a
+// physical table — so creation is implicit (first insert with a new value).
+
+export async function createCollection(collectionName) {
   const dims = getEmbeddingDimensions();
   return { name: collectionName, dimensions: dims };
 }
 
-export async function deleteQdrantCollection(collectionName) {
+export async function deleteCollection(collectionName) {
   await pool.query('DELETE FROM memories WHERE collection = $1', [collectionName]);
   return { deleted: true };
 }
 
-export async function listQdrantCollections() {
+export async function listStoredCollections() {
   const result = await pool.query('SELECT collection AS name, COUNT(*) AS points FROM memories GROUP BY collection');
   return result.rows.map(r => ({ name: r.name, points_count: parseInt(r.points) }));
 }
 
-// Collection info (used by stats)
 export async function getCollectionInfo(collection) {
   const col = collection || 'shared_memories';
   const result = await pool.query(

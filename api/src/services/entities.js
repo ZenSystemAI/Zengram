@@ -192,9 +192,7 @@ export function extractEntities(text, clientId, sourceAgent) {
   return entities;
 }
 
-/**
- * Reclassify an entity's type in the structured store (Postgres or SQLite).
- */
+// Reclassify an entity's canonical type and recount its memory links.
 export async function reclassifyEntity(entityName, newType, storeFns) {
   const { findEntity, _getStoreInstance } = storeFns;
   const entity = await findEntity(entityName);
@@ -203,32 +201,17 @@ export async function reclassifyEntity(entityName, newType, storeFns) {
   }
 
   const store = _getStoreInstance();
-  if (!store || (!store.db && !store.pool)) {
+  if (!store?.pool) {
     return { updated: false, entity_id: entity.id, memories_affected: 0, error: 'No writable store' };
   }
 
   const oldType = entity.entity_type;
-  let memoriesAffected = 0;
+  await store.pool.query('UPDATE entities SET entity_type = $1 WHERE id = $2', [newType, entity.id]);
+  const linkResult = await store.pool.query(
+    'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
+  );
+  const memoriesAffected = parseInt(linkResult.rows[0]?.count) || 0;
 
-  if (store.pool) {
-    // Postgres path
-    await store.pool.query('UPDATE entities SET entity_type = $1 WHERE id = $2', [newType, entity.id]);
-    const linkResult = await store.pool.query(
-      'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
-    );
-    memoriesAffected = parseInt(linkResult.rows[0]?.count) || 0;
-  } else if (store.db) {
-    // SQLite path
-    store.db.prepare('UPDATE entities SET entity_type = @newType WHERE id = @id').run({
-      newType, id: entity.id,
-    });
-    const linkCount = store.db.prepare(
-      'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id'
-    ).get({ id: entity.id });
-    memoriesAffected = linkCount?.count || 0;
-  }
-
-  // Update alias cache entry
   addToAliasCache(entityName, entity.id, entity.canonical_name, newType);
 
   return {

@@ -5,6 +5,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const API_URL = process.env.BRAIN_API_URL || 'http://localhost:8084';
 const API_KEY = process.env.BRAIN_API_KEY;
@@ -41,7 +42,7 @@ async function apiRequest(path, options = {}) {
 }
 
 const server = new Server(
-  { name: 'zengram', version: '2.5.1' },
+  { name: 'zengram', version: pkg.version },
   { capabilities: { tools: {} } }
 );
 
@@ -344,40 +345,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: 'brain_reclassify',
-      description: 'Reclassify entity types in the knowledge graph. Use action="suggest" to auto-detect misclassified entities, or action="apply" with dry_run=true (default) to preview changes before applying.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          action: {
-            type: 'string',
-            enum: ['suggest', 'apply'],
-            description: 'suggest=get auto-detected misclassifications, apply=reclassify entities',
-          },
-          reclassifications: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string' },
-                new_type: {
-                  type: 'string',
-                  enum: ['client', 'person', 'system', 'service', 'domain', 'technology', 'workflow', 'agent'],
-                },
-              },
-              required: ['name', 'new_type'],
-            },
-            description: 'For action=apply: list of entities to reclassify',
-          },
-          dry_run: {
-            type: 'boolean',
-            description: 'For action=apply: preview changes without applying (default: true)',
-          },
-        },
-        required: ['action'],
-      },
-    },
-    {
       name: 'brain_reflect',
       description: 'Reflect on a topic by synthesizing patterns across stored memories. Searches relevant memories using multi-path retrieval, then uses LLM to analyze and produce insights about patterns, timeline evolution, contradictions, and knowledge gaps. Use this for "what do we know about X?", "what patterns do you see?", or "what\'s missing?"',
       inputSchema: {
@@ -397,33 +364,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['topic'],
-      },
-    },
-    {
-      name: 'brain_batch',
-      description: 'Store multiple memories in a single call with controlled parallelism. Useful for bulk data loading, agent bootstrap, or migration. Each memory is deduplicated independently. Returns per-item status (stored/deduplicated/failed).',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          memories: {
-            type: 'array',
-            description: 'Array of memory objects to store (max 100)',
-            items: {
-              type: 'object',
-              properties: {
-                type: { type: 'string', enum: ['event', 'fact', 'decision', 'status'] },
-                content: { type: 'string' },
-                source_agent: { type: 'string' },
-                client_id: { type: 'string' },
-                category: { type: 'string', enum: ['semantic', 'episodic', 'procedural'] },
-                importance: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-                knowledge_category: { type: 'string' },
-              },
-              required: ['type', 'content', 'source_agent'],
-            },
-          },
-        },
-        required: ['memories'],
       },
     },
   ],
@@ -589,27 +529,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case 'brain_reclassify': {
-        const action = args.action || 'suggest';
-        if (action === 'suggest') {
-          result = await apiRequest('/entities/reclassify/suggestions');
-        } else if (action === 'apply') {
-          if (!args.reclassifications || !Array.isArray(args.reclassifications) || args.reclassifications.length === 0) {
-            return { content: [{ type: 'text', text: 'Error: "reclassifications" array is required for action=apply' }], isError: true };
-          }
-          result = await apiRequest('/entities/reclassify', {
-            method: 'POST',
-            body: JSON.stringify({
-              reclassifications: args.reclassifications,
-              dry_run: args.dry_run !== false, // default true
-            }),
-          });
-        } else {
-          return { content: [{ type: 'text', text: `Error: unknown action "${action}". Use "suggest" or "apply".` }], isError: true };
-        }
-        break;
-      }
-
       case 'brain_reflect': {
         if (!args.topic || typeof args.topic !== 'string' || !args.topic.trim()) {
           return { content: [{ type: 'text', text: 'Error: "topic" is required (non-empty string)' }], isError: true };
@@ -622,18 +541,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             limit: args.limit,
           }),
           timeout: CONSOLIDATION_TIMEOUT,
-        });
-        break;
-      }
-
-      case 'brain_batch': {
-        if (!Array.isArray(args.memories) || args.memories.length === 0) {
-          return { content: [{ type: 'text', text: 'Error: "memories" must be a non-empty array' }], isError: true };
-        }
-        result = await apiRequest('/memory/batch', {
-          method: 'POST',
-          body: JSON.stringify({ memories: args.memories }),
-          timeout: Math.max(DEFAULT_TIMEOUT, args.memories.length * 3000), // ~3s per memory
         });
         break;
       }

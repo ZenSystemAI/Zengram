@@ -13,7 +13,7 @@ entitiesRouter.get('/', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
       return res.status(400).json({
-        error: 'Entity queries require sqlite or postgres backend. Set STRUCTURED_STORE in .env.',
+        error: 'Entity queries require a structured store. Set STRUCTURED_STORE=postgres in .env.',
       });
     }
 
@@ -48,7 +48,7 @@ entitiesRouter.get('/stats', async (req, res) => {
 entitiesRouter.post('/reclassify', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+      return res.status(400).json({ error: 'Entity queries require a structured store.' });
     }
 
     const { reclassifications, dry_run } = req.body;
@@ -96,9 +96,6 @@ entitiesRouter.post('/reclassify', async (req, res) => {
             'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
           );
           memoriesAffected = parseInt(result.rows[0]?.count) || 0;
-        } else if (store?.db) {
-          const linkCount = store.db.prepare('SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = @id').get({ id: entity.id });
-          memoriesAffected = linkCount?.count || 0;
         }
 
         results.push({
@@ -114,12 +111,12 @@ entitiesRouter.post('/reclassify', async (req, res) => {
           _getStoreInstance,
         });
 
-        // 2. Update Qdrant payloads in chunks
-        let qdrantResult = { total_updated: 0, total_scanned: 0 };
+        // 2. Rewrite entity_type on all memory payloads in the vector store
+        let vectorResult = { total_updated: 0, total_scanned: 0 };
         try {
-          qdrantResult = await batchUpdateEntityType(entity.canonical_name, oldType, entry.new_type);
+          vectorResult = await batchUpdateEntityType(entity.canonical_name, oldType, entry.new_type);
         } catch (err) {
-          console.error(`[entities:reclassify] Qdrant update failed for "${entry.name}":`, err.message);
+          console.error(`[entities:reclassify] Vector payload update failed for "${entry.name}":`, err.message);
         }
 
         results.push({
@@ -127,8 +124,8 @@ entitiesRouter.post('/reclassify', async (req, res) => {
           old_type: oldType,
           new_type: entry.new_type,
           memories_affected: storeResult.memories_affected,
-          qdrant_updated: qdrantResult.total_updated,
-          qdrant_scanned: qdrantResult.total_scanned,
+          vector_updated: vectorResult.total_updated,
+          vector_scanned: vectorResult.total_scanned,
         });
 
         // 3. Log reclassification as an event in the brain (fire-and-forget)
@@ -143,7 +140,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
             },
             body: JSON.stringify({
               type: 'event',
-              content: `Entity reclassified: "${entity.canonical_name}" changed from ${oldType} to ${entry.new_type}. ${storeResult.memories_affected} memories linked, ${qdrantResult.total_updated} Qdrant payloads updated.`,
+              content: `Entity reclassified: "${entity.canonical_name}" changed from ${oldType} to ${entry.new_type}. ${storeResult.memories_affected} memories linked, ${vectorResult.total_updated} vector payloads updated.`,
               source_agent: 'system',
               client_id: 'global',
               category: 'episodic',
@@ -171,7 +168,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
 entitiesRouter.get('/:name', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+      return res.status(400).json({ error: 'Entity queries require a structured store.' });
     }
 
     const entity = await findEntity(req.params.name);
@@ -198,7 +195,7 @@ entitiesRouter.get('/:name', async (req, res) => {
 entitiesRouter.delete('/:name', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+      return res.status(400).json({ error: 'Entity queries require a structured store.' });
     }
 
     const entity = await findEntity(req.params.name);
@@ -207,16 +204,12 @@ entitiesRouter.delete('/:name', async (req, res) => {
     }
 
     const store = _getStoreInstance();
-    if (!store?.pool && !store?.db) {
+    if (!store?.pool) {
       return res.status(500).json({ error: 'No writable store available' });
     }
 
     // CASCADE handles entity_memory_links and entity_aliases
-    if (store.pool) {
-      await store.pool.query('DELETE FROM entities WHERE id = $1', [entity.id]);
-    } else if (store.db) {
-      store.db.prepare('DELETE FROM entities WHERE id = @id').run({ id: entity.id });
-    }
+    await store.pool.query('DELETE FROM entities WHERE id = $1', [entity.id]);
 
     console.log(`[entities:delete] Entity "${entity.canonical_name}" (${entity.entity_type}) deleted`);
 
@@ -236,7 +229,7 @@ entitiesRouter.delete('/:name', async (req, res) => {
 entitiesRouter.post('/:name/merge', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+      return res.status(400).json({ error: 'Entity queries require a structured store.' });
     }
 
     const { merge_from } = req.body;
@@ -318,7 +311,7 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
 entitiesRouter.get('/:name/memories', async (req, res) => {
   try {
     if (!isEntityStoreAvailable()) {
-      return res.status(400).json({ error: 'Entity queries require sqlite or postgres backend.' });
+      return res.status(400).json({ error: 'Entity queries require a structured store.' });
     }
 
     const entity = await findEntity(req.params.name);

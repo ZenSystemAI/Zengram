@@ -12,7 +12,7 @@ import { reflectRouter } from './routes/reflect.js';
 import { collectionsRouter } from './routes/collections.js';
 import { initPgvector, ensureEntityIndex } from './services/pgvector.js';
 import { initEmbeddings } from './services/embedders/interface.js';
-import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance, getBackendType } from './services/stores/interface.js';
+import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance } from './services/stores/interface.js';
 import { initKeywordSearch, getKeywordIndexCount } from './services/keyword-search.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
@@ -61,18 +61,16 @@ app.use('/collections', collectionsRouter);
 
 async function start() {
   try {
-    // Initialize embedding provider first (Qdrant needs dimensions)
+    // Embedding provider must come up first — pgvector init reads the
+    // dimensions when registering the vector column type.
     await initEmbeddings();
 
     await initPgvector();
     await ensureEntityIndex();
     console.log('[zengram] Vector store ready (pgvector)');
 
-    // Initialize structured storage backend
     await initStore();
-
-    // Initialize keyword search (BM25 via Postgres tsvector or SQLite FTS5)
-    initKeywordSearch(_getStoreInstance(), getBackendType());
+    initKeywordSearch(_getStoreInstance());
 
     // Load entity alias cache for fast-path extraction
     if (isEntityStoreAvailable()) {

@@ -1,20 +1,18 @@
 {
   "name": "zengram-api",
-  "version": "1.0.0",
+  "version": "4.1.0",
   "type": "module",
-  "description": "Centralized memory API for cross-agent knowledge sharing",
+  "description": "Zengram memory API — pgvector + BM25 with RRF fusion, entity extraction, credential scrubbing.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "find tests -name '*.test.js' | xargs node --test",
-    "reindex": "node scripts/reindex-embeddings.js"
+    "test": "find tests -name '*.test.js' | xargs node --test"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "better-sqlite3": "^11.6.0",
     "express": "^4.21.0",
     "node-cron": "^3.0.3",
     "openai": "^4.73.0",

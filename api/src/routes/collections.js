@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createQdrantCollection, deleteQdrantCollection, listQdrantCollections, getCollectionInfo } from '../services/pgvector.js';
+import { createCollection, deleteCollection, listStoredCollections, getCollectionInfo } from '../services/pgvector.js';
 import {
   resolveCollection, validateCollectionSlug, registerCollection,
   unregisterCollection, listCollections, getDefaultCollection,
@@ -7,27 +7,25 @@ import {
 
 export const collectionsRouter = Router();
 
-// GET /collections — List all known collections
+// GET /collections — list both the in-memory registry and any collection
+// values actually present in the vector store, and mark which side each
+// entry came from.
 collectionsRouter.get('/', async (req, res) => {
   try {
-    // Get registry + actual Qdrant collections
-    const [registry, qdrantCollections] = await Promise.all([
+    const [registry, stored] = await Promise.all([
       Promise.resolve(listCollections()),
-      listQdrantCollections(),
+      listStoredCollections(),
     ]);
+    const storedNames = new Set(stored.map(c => c.name));
 
-    const qdrantNames = new Set(qdrantCollections.map(c => c.name));
-
-    // Merge: mark registry entries with Qdrant existence
     const merged = registry.map(c => ({
       ...c,
-      exists_in_qdrant: qdrantNames.has(c.name),
+      exists_in_store: storedNames.has(c.name),
     }));
 
-    // Add Qdrant collections not in registry (discovered)
-    for (const qc of qdrantCollections) {
-      if (!registry.some(r => r.name === qc.name)) {
-        merged.push({ name: qc.name, is_default: false, exists_in_qdrant: true, discovered: true });
+    for (const sc of stored) {
+      if (!registry.some(r => r.name === sc.name)) {
+        merged.push({ name: sc.name, is_default: false, exists_in_store: true, discovered: true });
       }
     }
 
@@ -38,7 +36,7 @@ collectionsRouter.get('/', async (req, res) => {
   }
 });
 
-// POST /collections — Create a new collection
+// POST /collections — create a new collection
 collectionsRouter.post('/', async (req, res) => {
   try {
     const { name, description } = req.body;
@@ -48,16 +46,12 @@ collectionsRouter.post('/', async (req, res) => {
 
     const collectionName = resolveCollection(name);
 
-    // Check if already exists in Qdrant
-    try {
-      await getCollectionInfo(name);
+    const existing = await getCollectionInfo(collectionName);
+    if (existing.points_count > 0) {
       return res.status(409).json({ error: `Collection '${collectionName}' already exists` });
-    } catch (e) {
-      if (!e.message?.includes('404')) throw e;
-      // 404 = doesn't exist, good to create
     }
 
-    const result = await createQdrantCollection(collectionName);
+    const result = await createCollection(collectionName);
     registerCollection(collectionName, { description: description || '' });
 
     console.log(`[collections] Created: ${collectionName} (${result.dimensions} dims)`);
@@ -74,22 +68,22 @@ collectionsRouter.post('/', async (req, res) => {
   }
 });
 
-// GET /collections/:name — Get collection info
+// GET /collections/:name
 collectionsRouter.get('/:name', async (req, res) => {
   try {
     const collectionName = resolveCollection(req.params.name);
-    const info = await getCollectionInfo(req.params.name);
-    res.json({ name: collectionName, ...info });
-  } catch (err) {
-    if (err.message?.includes('404')) {
+    const info = await getCollectionInfo(collectionName);
+    if (info.points_count === 0) {
       return res.status(404).json({ error: 'Collection not found' });
     }
+    res.json({ name: collectionName, ...info });
+  } catch (err) {
     console.error('[collections:get]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// DELETE /collections/:name — Delete a collection (admin only, not the default)
+// DELETE /collections/:name
 collectionsRouter.delete('/:name', async (req, res) => {
   try {
     const collectionName = resolveCollection(req.params.name);
@@ -98,16 +92,13 @@ collectionsRouter.delete('/:name', async (req, res) => {
       return res.status(400).json({ error: 'Cannot delete the default collection' });
     }
 
-    await deleteQdrantCollection(collectionName);
+    await deleteCollection(collectionName);
     unregisterCollection(collectionName);
 
     console.log(`[collections] Deleted: ${collectionName}`);
 
     res.json({ deleted: true, name: collectionName });
   } catch (err) {
-    if (err.message?.includes('404')) {
-      return res.status(404).json({ error: 'Collection not found' });
-    }
     console.error('[collections:delete]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
