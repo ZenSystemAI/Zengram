@@ -1,6 +1,6 @@
 {
   "name": "zengram-api",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "type": "module",
   "description": "Zengram memory API — pgvector + BM25 with RRF fusion, entity extraction, credential scrubbing.",
   "main": "src/index.js",

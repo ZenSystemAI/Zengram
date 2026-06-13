@@ -10,14 +10,12 @@ import {
 import { isKeywordSearchAvailable, indexMemory } from './keyword-search.js';
 import { loadAliasCache, addToAliasCache } from './entities.js';
 import { VALID_IMPORTANCE } from '../middleware/validate.js';
+import {
+  parseConsolidationResponse, isLlmOutputError, isSupersedableType,
+  consolidationRunStatus, consolidationJobStatus,
+} from './consolidation-utils.js';
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
-
-// Thrown when the consolidation LLM returns unparseable JSON. The batch runner
-// leaves the source memories unconsolidated so the next run can retry.
-class LlmJsonError extends Error {
-  constructor(msg) { super(msg); this.name = 'LlmJsonError'; }
-}
 
 let lastRunAt = null;
 let isRunning = false;
@@ -143,7 +141,7 @@ export async function runConsolidation() {
           await updatePointPayload(ids, { consolidated: true, consolidated_at: new Date().toISOString() });
         } catch (err) {
           errors.push({ client_id: clientId, batch_start: i, error: err.message });
-          if (err instanceof LlmJsonError) {
+          if (isLlmOutputError(err)) {
             // Leave the batch unmarked so the next consolidation run retries it.
             console.error(`[consolidation] Batch for ${clientId} left unconsolidated due to LLM JSON error`);
           } else {
@@ -158,7 +156,7 @@ export async function runConsolidation() {
     isRunning = false;
 
     const summary = {
-      status: 'complete',
+      status: consolidationRunStatus(errors),
       memories_processed: points.length,
       groups_processed: Object.keys(groups).length,
       merged_facts: totalMerged,
@@ -224,22 +222,15 @@ async function consolidateBatch(points, clientId) {
   const prompt = CONSOLIDATION_PROMPT + memoriesText;
   const responseText = await complete(prompt);
 
-  // Parse the LLM response. Malformed JSON throws LlmJsonError so the batch
-  // runner can skip the 'consolidated: true' write and retry on the next run.
+  // Parse the LLM response (tolerant of code fences + trailing prose, with
+  // array-field schema validation). Malformed output throws LlmOutputError so
+  // the batch runner skips the 'consolidated: true' write and retries next run.
   let result;
   try {
-    let jsonText = responseText.trim();
-    const fenceMatch = jsonText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
-    if (fenceMatch) jsonText = fenceMatch[1].trim();
-    result = JSON.parse(jsonText);
+    result = parseConsolidationResponse(responseText);
   } catch (e) {
     console.error('[consolidation] LLM returned invalid JSON:', responseText.slice(0, 300));
-    throw new LlmJsonError('invalid JSON from consolidation LLM');
-  }
-
-  if (typeof result !== 'object' || result === null || Array.isArray(result)) {
-    console.error('[consolidation] LLM returned non-object JSON');
-    throw new LlmJsonError('non-object JSON from consolidation LLM');
+    throw e;
   }
 
   // Validate: strip any memory IDs not in the current batch
@@ -413,6 +404,30 @@ async function consolidateBatch(points, clientId) {
         }).catch(e => console.error('[consolidation:store-event]', e.message));
       }
 
+      // Auto-supersede the older memory when the contradiction is between two
+      // current-state assertions (fact/status) — the newer one wins. Events and
+      // decisions are historical records and stay active; the CONTRADICTION
+      // DETECTED event above preserves the audit trail either way.
+      try {
+        const a = points.find(p => p.id === contradiction.memory_a);
+        const b = points.find(p => p.id === contradiction.memory_b);
+        if (a && b) {
+          const aTime = new Date(a.payload?.created_at || 0).getTime();
+          const bTime = new Date(b.payload?.created_at || 0).getTime();
+          const [older, newer] = aTime <= bTime ? [a, b] : [b, a];
+          if (isSupersedableType(older.payload?.type)) {
+            await updatePointPayload(older.id, {
+              active: false,
+              superseded_by: newer.id,
+              superseded_at: now,
+              superseded_reason: 'contradiction-resolved-auto',
+            });
+          }
+        }
+      } catch (e) {
+        console.error('[consolidation:auto-supersede]', e.message);
+      }
+
       contradictions++;
     }
   }
@@ -510,7 +525,7 @@ export function startConsolidationJob() {
 
   // Run in background — don't await
   runConsolidation().then(result => {
-    jobs.set(jobId, { status: 'complete', startedAt: jobs.get(jobId)?.startedAt, result, error: null });
+    jobs.set(jobId, { status: consolidationJobStatus(result), startedAt: jobs.get(jobId)?.startedAt, result, error: null });
     // Auto-clean jobs older than 1 hour
     setTimeout(() => jobs.delete(jobId), 3_600_000);
   }).catch(err => {

@@ -9,6 +9,7 @@ const MAX_METADATA_SIZE = 10_240; // 10 KB serialized
 const MAX_METADATA_DEPTH = 3;
 const MAX_OBSERVED_BY = 20;
 const MAX_STRING_FIELD_LENGTH = 256;
+const TOOL_CALL_CONTROL_MARKUP_RE = /<\/?(?:tool_call|function|arguments?|parameters?|params?|args?)\b/i;
 
 function checkDepth(obj, max, current = 0) {
   if (current >= max) return false;
@@ -19,8 +20,34 @@ function checkDepth(obj, max, current = 0) {
   return Object.values(obj).every(val => checkDepth(val, max, current + 1));
 }
 
-export function validateSourceAgent(agent) {
+// Reject content/metadata that smuggles fake tool-call control markup. A memory
+// store feeds its output back into LLM context, so a stored <tool_call> snippet
+// is a prompt-injection vector against a later agent. Recursively scans strings,
+// object keys, and nested values.
+export function containsToolCallControlMarkup(value, depth = 0) {
+  if (typeof value === 'string') return TOOL_CALL_CONTROL_MARKUP_RE.test(value);
+  if (!value || typeof value !== 'object' || depth >= 8) return false;
+  if (Array.isArray(value)) {
+    return value.some(item => containsToolCallControlMarkup(item, depth + 1));
+  }
+  return Object.entries(value).some(([key, nestedValue]) => (
+    TOOL_CALL_CONTROL_MARKUP_RE.test(key) || containsToolCallControlMarkup(nestedValue, depth + 1)
+  ));
+}
+
+export function validateNoToolCallControlMarkup(value, name) {
+  if (containsToolCallControlMarkup(value)) {
+    return `${name} contains tool-call control markup; retry with clean argument text`;
+  }
+  return null;
+}
+
+export function validateSourceAgent(agent, { allowToolCallControlMarkup = false } = {}) {
   if (!agent || typeof agent !== 'string') return 'source_agent is required and must be a string';
+  if (!allowToolCallControlMarkup) {
+    const markupError = validateNoToolCallControlMarkup(agent, 'source_agent');
+    if (markupError) return markupError;
+  }
   if (!AGENT_NAME_REGEX.test(agent)) return `source_agent must match ${AGENT_NAME_REGEX} (1-64 alphanumeric, hyphens, underscores)`;
   return null;
 }
@@ -37,18 +64,26 @@ export function validateImportance(importance) {
   return null;
 }
 
-export function validateContent(content) {
+export function validateContent(content, { allowToolCallControlMarkup = false } = {}) {
   if (!content || typeof content !== 'string') return 'content is required and must be a string';
   if (content.length > MAX_CONTENT_LENGTH) return `content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters (got ${content.length})`;
+  if (!allowToolCallControlMarkup) {
+    const markupError = validateNoToolCallControlMarkup(content, 'content');
+    if (markupError) return markupError;
+  }
   return null;
 }
 
-export function validateMetadata(metadata) {
+export function validateMetadata(metadata, { allowToolCallControlMarkup = false } = {}) {
   if (metadata === undefined || metadata === null) return null; // optional
   if (typeof metadata !== 'object' || Array.isArray(metadata)) return 'metadata must be a plain object';
   const serialized = JSON.stringify(metadata);
   if (serialized.length > MAX_METADATA_SIZE) return `metadata exceeds maximum size of ${MAX_METADATA_SIZE} bytes (got ${serialized.length})`;
   if (!checkDepth(metadata, MAX_METADATA_DEPTH)) return `metadata exceeds maximum nesting depth of ${MAX_METADATA_DEPTH}`;
+  if (!allowToolCallControlMarkup) {
+    const markupError = validateNoToolCallControlMarkup(metadata, 'metadata');
+    if (markupError) return markupError;
+  }
   return null;
 }
 
@@ -58,15 +93,19 @@ function validateKnowledgeCategory(kc) {
   return null;
 }
 
-export function validateStringField(value, name, maxLen = MAX_STRING_FIELD_LENGTH) {
+export function validateStringField(value, name, maxLen = MAX_STRING_FIELD_LENGTH, { allowToolCallControlMarkup = false } = {}) {
   if (value === undefined || value === null) return null; // optional
   if (typeof value !== 'string') return `${name} must be a string`;
   if (value.length > maxLen) return `${name} exceeds maximum length of ${maxLen} characters`;
+  if (!allowToolCallControlMarkup) {
+    const markupError = validateNoToolCallControlMarkup(value, name);
+    if (markupError) return markupError;
+  }
   return null;
 }
 
-function validateClientId(clientId) {
-  return validateStringField(clientId, 'client_id', 64);
+function validateClientId(clientId, options) {
+  return validateStringField(clientId, 'client_id', 64, options);
 }
 
 function validateTemporalFields(valid_from, valid_to) {
@@ -87,17 +126,18 @@ function validateTemporalFields(valid_from, valid_to) {
 }
 
 // Validate all inputs for POST /memory and return first error or null
-export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value, valid_from, valid_to, knowledge_category }) {
+export function validateMemoryInput({ type, content, source_agent, importance, metadata, client_id, key, subject, status_value, valid_from, valid_to, knowledge_category }, { allowToolCallControlMarkup = false } = {}) {
+  const opts = { allowToolCallControlMarkup };
   return validateType(type)
-    || validateContent(content)
-    || validateSourceAgent(source_agent)
+    || validateContent(content, opts)
+    || validateSourceAgent(source_agent, opts)
     || validateImportance(importance)
     || validateKnowledgeCategory(knowledge_category)
-    || validateMetadata(metadata)
-    || validateClientId(client_id)
-    || validateStringField(key, 'key', 128)
-    || validateStringField(subject, 'subject', 256)
-    || validateStringField(status_value, 'status_value', 256)
+    || validateMetadata(metadata, opts)
+    || validateClientId(client_id, opts)
+    || validateStringField(key, 'key', 128, opts)
+    || validateStringField(subject, 'subject', 256, opts)
+    || validateStringField(status_value, 'status_value', 256, opts)
     || validateTemporalFields(valid_from, valid_to)
     || null;
 }

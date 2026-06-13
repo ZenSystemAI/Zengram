@@ -4,6 +4,32 @@ This changelog covers the entire Zengram project (API, MCP server, adapters, and
 
 This root file is the canonical changelog for the project. The `mcp-server/CHANGELOG.md` tracks only the published `@zensystemai/zengram-mcp` package history.
 
+## 4.3.0 (2026-06-13)
+
+Feature + hardening release. Adds agentic multi-hop retrieval (`brain_research`), grounds reflection answers with verifiable citations, and ports a set of generic safety/quality improvements from the production deployment. One behavior change to the destructive `/export/import` endpoint (now gated) — see Changed.
+
+### Added
+- **`brain_research` / `POST /research` — agentic, iterate-until-sufficient retrieval.** A bounded loop (the "Sufficient Context" agent pattern): multi-path retrieve → one LLM call that drafts an answer *and* judges SUFFICIENT/INSUFFICIENT while naming the exact missing facts → the named gap becomes the next query (the gap is the decomposition, no separate planner) → grounded synthesis with per-claim `[mem:<id>]` citations (fabricated ones stripped). Opt-in behind `RESEARCH_ENABLED=true`; never touches the `GET /memory/search` hot path; rate-limited with consolidation. New `brain_research` MCP tool (13 tools total).
+- **Reflection citation grounding.** `POST /reflect` now asks the LLM to cite source memories as `[mem:<id>]`, strips any citation referencing a memory that wasn't actually retrieved, and returns `cited_memory_ids` for auditability.
+- **Full temporal/lifecycle export-import round-trip.** `GET /export` and `POST /export/import` now carry `supersedes`, `superseded_at`, `deleted_at`, `deletion_reason`, `valid_from`, `valid_to`, `observed_by`, `observation_count`, `consolidated`, and (scrubbed) `metadata`, so a backup→restore preserves supersede chains and temporal validity.
+- **Read-only search.** `GET /memory/search` accepts `read_only=true` / `track_access=false` so background sweeps (reflection, eval, consolidation candidate-gathering) don't bump access counts and pollute the recency/frequency signals feeding relevance scoring.
+- Unit tests for the new helpers — request-param parsing, reflection/research/consolidation JSON extraction + grounding, embedding-dimension parsing, the markup guard, and the import gate. 176 tests total (up from 128).
+
+### Changed
+- **`POST /export/import` now requires `operator_approved=true`** (in the body or query) and returns `403` otherwise. Import overwrites live memories, so a destructive restore now needs explicit operator authorization. The `brain_import` MCP tool gained a required `operator_approved` argument.
+- **Consolidation auto-resolves contradictions** between current-state assertions: when the LLM flags a contradiction between two `fact`/`status` memories, the older one is superseded (`superseded_reason: contradiction-resolved-auto`). Events and decisions stay active as historical records — the audit-trail event is still written.
+- **Consolidation reports honest status.** Runs/jobs with failed batches now report `partial` instead of `complete`, and LLM JSON parsing tolerates code fences + trailing prose with array-field schema validation.
+- **Consolidation rate limit is configurable** via `RATE_LIMIT_CONSOLIDATION` (default raised from 1/hour to 10/hour) so a manual run plus a cron tick no longer 429s the operator.
+
+### Security
+- **Tool-call control-markup guard.** Stored content/metadata/agent/string fields are rejected when they smuggle fake tool-call control markup (`<tool_call>`, `<function>`, `<arguments>`, …) — a prompt-injection vector against any later agent that reads the memory back. Trusted restore paths can opt out.
+
+### Fixed
+- Embedding dimensions fail loudly on a misconfigured `*_EMBEDDING_DIMS` env var (non-integer or ≤ 0) instead of silently producing wrong-sized vectors that mismatch the pgvector column.
+
+### Notes
+- These improvements were ported from the maintainer's production Zengram deployment; only generic, product-worthy code was brought over (no operator/client-specific data). The cross-run sliding-window contradiction detection from that deployment was evaluated and deferred to a later release.
+
 ## 4.2.0 (2026-06-12)
 
 Cleanup and hardening release — docs realigned to the v4 surface, retrieval/consolidation bug fixes, security defaults, and dependency/CI hygiene. No breaking API changes.

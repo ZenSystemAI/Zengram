@@ -341,13 +341,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_import',
-      description: 'Import memories from JSON (e.g. from a brain_export backup). Re-embeds with current provider, deduplicates by content hash. Max 500 records per call.',
+      description: 'Operator-only: import memories from JSON (e.g. from a brain_export backup). Mutates the memory store, re-embeds with current provider, and deduplicates by content hash. Requires operator_approved=true. Max 500 records per call.',
       inputSchema: {
         type: 'object',
         properties: {
           data: { type: 'array', description: 'Array of memory objects to import (same format as brain_export output)', items: { type: 'object' } },
+          operator_approved: {
+            type: 'boolean',
+            description: 'Required true. Confirms the current operator explicitly authorized this import/restore operation (it overwrites live memories).',
+          },
         },
-        required: ['data'],
+        required: ['data', 'operator_approved'],
       },
     },
     {
@@ -367,6 +371,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           limit: {
             type: 'number',
             description: 'Max memories to analyze (default 20, max 50). More memories = richer analysis but slower.',
+          },
+        },
+        required: ['topic'],
+      },
+    },
+    {
+      name: 'brain_research',
+      description: 'Agentic, iterate-until-sufficient retrieval for HARD MULTI-HOP questions only (e.g. "find the decision that superseded X, then what status it left Y in"). Runs a loop: retrieve -> judge whether the gathered memories actually answer the question -> if not, search the named gap -> repeat (bounded) -> synthesize a grounded answer with per-claim [mem:<id>] citations. Heavyweight (several LLM calls, rate-limited) and OFF by default (server must set RESEARCH_ENABLED=true). Do NOT use for routine recall — use brain_search for that, or brain_reflect for one-shot pattern synthesis. Returns answer, key_findings, cited_memory_ids, unresolved, and partial=true if it could not fully resolve within the iteration budget.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'The multi-hop question to research. Phrase it as the full question you want answered, not a keyword.',
+          },
+          client_id: {
+            type: 'string',
+            description: 'Scope research to a specific client (optional)',
+          },
+          max_iterations: {
+            type: 'number',
+            description: 'Max retrieval rounds before synthesizing (default 2, max 4). Higher = deeper multi-hop, more cost/latency.',
           },
         },
         required: ['topic'],
@@ -528,9 +554,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'brain_import': {
+        if (args.operator_approved !== true) {
+          return { content: [{ type: 'text', text: 'Error: "operator_approved" must be true — import overwrites live memories and needs explicit operator authorization' }], isError: true };
+        }
         result = await apiRequest('/export/import', {
           method: 'POST',
-          body: JSON.stringify({ data: args.data }),
+          body: JSON.stringify({ data: args.data, operator_approved: true }),
         });
         break;
       }
@@ -545,6 +574,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             topic: args.topic,
             client_id: args.client_id,
             limit: args.limit,
+          }),
+          timeout: CONSOLIDATION_TIMEOUT,
+        });
+        break;
+      }
+
+      case 'brain_research': {
+        if (!args.topic || typeof args.topic !== 'string' || !args.topic.trim()) {
+          return { content: [{ type: 'text', text: 'Error: "topic" is required (non-empty string)' }], isError: true };
+        }
+        if (args.max_iterations !== undefined && !Number.isInteger(args.max_iterations)) {
+          return { content: [{ type: 'text', text: 'Error: "max_iterations" must be an integer (1-4)' }], isError: true };
+        }
+        result = await apiRequest('/research', {
+          method: 'POST',
+          body: JSON.stringify({
+            topic: args.topic,
+            client_id: args.client_id,
+            max_iterations: args.max_iterations,
           }),
           timeout: CONSOLIDATION_TIMEOUT,
         });

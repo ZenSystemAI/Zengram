@@ -9,6 +9,7 @@ import { consolidationRouter } from './routes/consolidation.js';
 import { entitiesRouter } from './routes/entities.js';
 import { exportRouter } from './routes/export.js';
 import { reflectRouter } from './routes/reflect.js';
+import { researchRouter } from './routes/research.js';
 import { collectionsRouter } from './routes/collections.js';
 import { initPgvector, ensureEntityIndex } from './services/pgvector.js';
 import { initEmbeddings } from './services/embedders/interface.js';
@@ -62,6 +63,7 @@ app.use('/consolidate', consolidationRouter);
 app.use('/entities', entitiesRouter);
 app.use('/export', exportRouter);
 app.use('/reflect', reflectRouter);
+app.use('/research', researchRouter);
 app.use('/collections', collectionsRouter);
 
 async function start() {
@@ -88,35 +90,39 @@ async function start() {
       }
     }
 
-    // Initialize consolidation LLM (optional — only if enabled)
-    // Consolidation is now gated: only runs when corpus has real work to do.
-    // Cron still fires, but skips if corpus < CONSOLIDATION_MIN_CORPUS (default 1500).
-    // Manual trigger via POST /consolidate always runs regardless.
-    if (process.env.CONSOLIDATION_ENABLED !== 'false') {
+    // Initialize the LLM provider when consolidation OR research is enabled.
+    // Consolidation runs on a gated schedule (skips if corpus < CONSOLIDATION_MIN_CORPUS,
+    // default 1500; manual POST /consolidate always runs). /research is an on-demand
+    // agentic loop (RESEARCH_ENABLED=true) that needs the same provider but no cron.
+    const consolidationEnabled = process.env.CONSOLIDATION_ENABLED !== 'false';
+    const researchEnabled = process.env.RESEARCH_ENABLED === 'true';
+    if (consolidationEnabled || researchEnabled) {
       try {
         await initLLM();
-        console.log('[zengram] Consolidation LLM ready');
+        console.log(`[zengram] LLM provider ready${researchEnabled ? ' (research enabled)' : ''}`);
 
-        const interval = process.env.CONSOLIDATION_INTERVAL || '0 */6 * * *';
-        const minCorpus = parseInt(process.env.CONSOLIDATION_MIN_CORPUS) || 1500;
-        const { default: cron } = await import('node-cron');
-        cron.schedule(interval, async () => {
-          try {
-            const corpusSize = await getKeywordIndexCount();
-            if (corpusSize < minCorpus) {
-              console.log(`[consolidation] Skipped (corpus=${corpusSize} < threshold=${minCorpus})`);
-              return;
+        if (consolidationEnabled) {
+          const interval = process.env.CONSOLIDATION_INTERVAL || '0 */6 * * *';
+          const minCorpus = parseInt(process.env.CONSOLIDATION_MIN_CORPUS) || 1500;
+          const { default: cron } = await import('node-cron');
+          cron.schedule(interval, async () => {
+            try {
+              const corpusSize = await getKeywordIndexCount();
+              if (corpusSize < minCorpus) {
+                console.log(`[consolidation] Skipped (corpus=${corpusSize} < threshold=${minCorpus})`);
+                return;
+              }
+              console.log(`[consolidation] Scheduled run starting (corpus=${corpusSize})...`);
+              const result = await runConsolidation();
+              console.log(`[consolidation] Complete: ${result.memories_processed} memories processed`);
+            } catch (err) {
+              console.error('[consolidation] Scheduled run failed:', err.message);
             }
-            console.log(`[consolidation] Scheduled run starting (corpus=${corpusSize})...`);
-            const result = await runConsolidation();
-            console.log(`[consolidation] Complete: ${result.memories_processed} memories processed`);
-          } catch (err) {
-            console.error('[consolidation] Scheduled run failed:', err.message);
-          }
-        });
-        console.log(`[zengram] Consolidation scheduled: ${interval} (gated at ${minCorpus} memories)`);
+          });
+          console.log(`[zengram] Consolidation scheduled: ${interval} (gated at ${minCorpus} memories)`);
+        }
       } catch (llmErr) {
-        console.warn(`[zengram] Consolidation LLM init failed (consolidation disabled): ${llmErr.message}`);
+        console.warn(`[zengram] LLM provider init failed (consolidation/research unavailable): ${llmErr.message}`);
       }
     } else {
       console.log('[zengram] Consolidation disabled (CONSOLIDATION_ENABLED=false)');

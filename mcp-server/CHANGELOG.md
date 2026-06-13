@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.3.0 (2026-06-13)
+
+- **New tool `brain_research`** — agentic, iterate-until-sufficient retrieval for hard multi-hop questions. Runs a bounded retrieve → judge-sufficiency → requery-the-gap loop and returns a grounded answer with per-claim `[mem:<id>]` citations plus a `partial` flag. Requires the API server to set `RESEARCH_ENABLED=true`; heavyweight and rate-limited — do not use for routine recall (use `brain_search`, or `brain_reflect` for one-shot synthesis). 13 tools total.
+- **`brain_import` now requires `operator_approved: true`.** The destructive restore is gated on the API side (`403` without it); the tool argument is now required and passed through.
+- `brain_reflect` responses now include grounded `cited_memory_ids` (the API strips fabricated citations).
+
+See the root [CHANGELOG](../CHANGELOG.md) for full API-side detail (3.x–4.2 history is also there).
+
 ## 4.2.0 (2026-06-12)
 
 Cleanup and hardening release. See the root [CHANGELOG](../CHANGELOG.md) for full project history (3.x–4.1 are covered there).

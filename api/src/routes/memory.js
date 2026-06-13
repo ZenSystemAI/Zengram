@@ -18,6 +18,7 @@ import { reciprocalRankFusion } from '../services/rrf.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
 import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
+import { truthyParam, falseyParam } from '../services/request-utils.js';
 import { logError } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
@@ -274,11 +275,16 @@ memoryRouter.post('/', async (req, res) => {
 // Paths: vector (semantic) + keyword (BM25). Graph BFS path retired in v4.
 memoryRouter.get('/search', async (req, res) => {
   try {
-    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc } = req.query;
+    const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc, read_only, track_access } = req.query;
     const isCompact = format === 'compact';
     const isIndex = format === 'index';
     const isFull = format === 'full';
     const maxResults = Math.min(parseInt(limit) || 10, 100);
+
+    // Read-only / background sweeps (reflection, eval harness, consolidation
+    // candidate-gathering) can opt out of access-count bumping so automated
+    // reads don't pollute the recency/frequency signals that feed relevance.
+    const trackAccess = !truthyParam(read_only) && !falseyParam(track_access);
 
     if (!q) {
       return res.status(400).json({ error: 'Missing required query parameter: q' });
@@ -513,7 +519,7 @@ memoryRouter.get('/search', async (req, res) => {
     // Bump access_count + last_accessed_at for the returned results in one atomic
     // SQL statement (fire-and-forget — must not delay the search response).
     const pointIds = results.map(r => r.id);
-    if (pointIds.length > 0) {
+    if (trackAccess && pointIds.length > 0) {
       bumpAccessCounts(pointIds, new Date().toISOString())
         .catch(e => console.error('[memory:search] Access count update failed:', e.message));
     }

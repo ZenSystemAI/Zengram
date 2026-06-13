@@ -31,6 +31,7 @@ The MCP server requires two environment variables:
 | `brain_export` | Export memories as JSON | GET /export |
 | `brain_import` | Import memories from JSON | POST /export/import |
 | `brain_reflect` | LLM synthesis on a topic | POST /reflect |
+| `brain_research` | Agentic multi-hop retrieval | POST /research |
 
 ---
 
@@ -345,6 +346,30 @@ LLM-powered synthesis that analyzes memories about a topic and identifies patter
 
 ---
 
+## brain_research
+
+Agentic, iterate-until-sufficient retrieval for hard multi-hop questions. Runs a bounded loop: retrieve, judge whether the gathered memories actually answer the question, search the named gap if not, repeat. Then synthesizes a grounded answer with per-claim `[mem:<id>]` citations (fabricated citations are stripped).
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | Yes | The full multi-hop question (phrase it as a question, not a keyword) |
+| `client_id` | string | No | Scope to a specific client |
+| `max_iterations` | number | No | Retrieval rounds before synthesis (1-4, default 2) |
+
+**Example:**
+
+```json
+{"topic": "which decision superseded the old caching approach, and what status did it leave the API in?", "max_iterations": 3}
+```
+
+**Returns**: `answer`, `key_findings`, `cited_memory_ids`, `unresolved`, `partial` (true if it could not fully resolve within the iteration budget), plus `iterations` and `query_trace`.
+
+**When to use**: HARD multi-hop questions only, where one search won't surface every hop. Heavyweight (several LLM calls, rate-limited) and OFF by default (the server must set `RESEARCH_ENABLED=true`). For routine recall use `brain_search`; for one-shot pattern synthesis use `brain_reflect`.
+
+---
+
 ## Tool Selection Guide
 
 | I want to... | Use this tool |
@@ -358,6 +383,7 @@ LLM-powered synthesis that analyzes memories about a topic and identifies patter
 | Catch up on what happened | `brain_briefing` |
 | See brain health | `brain_stats` |
 | Ask "what do we know about X?" | `brain_reflect` |
+| Answer a hard multi-hop question | `brain_research` |
 | Fix incorrect memory | `brain_update` or `brain_delete` |
 | Backup memories | `brain_export` |
 | Restore from backup | `brain_import` |

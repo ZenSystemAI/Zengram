@@ -6,8 +6,9 @@ import {
   isStoreAvailable, createEvent, upsertFact, upsertStatus,
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
-import { scrubCredentials, contentHash as hashContent } from '../services/scrub.js';
+import { scrubCredentials, scrubObject, contentHash as hashContent } from '../services/scrub.js';
 import { validateMemoryInput } from '../middleware/validate.js';
+import { requestHasOperatorApproval } from '../services/request-utils.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
 import { logError } from '../lib/log.js';
@@ -62,10 +63,20 @@ exportRouter.get('/', async (req, res) => {
           confidence: p.confidence || null,
           access_count: p.access_count || 0,
           active: p.active !== undefined ? p.active : true,
+          supersedes: p.supersedes || null,
           superseded_by: p.superseded_by || null,
+          superseded_at: p.superseded_at || null,
+          deleted_at: p.deleted_at || null,
+          deletion_reason: p.deletion_reason || null,
           entities: p.entities || [],
           created_at: p.created_at || null,
           last_accessed_at: p.last_accessed_at || null,
+          valid_from: p.valid_from || null,
+          valid_to: p.valid_to || null,
+          observed_by: p.observed_by || [],
+          observation_count: p.observation_count || 0,
+          consolidated: p.consolidated || false,
+          metadata: p.metadata || null,
           content_hash: p.content_hash || null,
         });
       }
@@ -91,6 +102,15 @@ exportRouter.get('/', async (req, res) => {
 // POST /export/import — Import memories with dedup and batching
 exportRouter.post('/import', async (req, res) => {
   try {
+    // Import restores/overwrites live memories — guard against an agent
+    // triggering a destructive restore unprompted. Requires operator_approved=true
+    // in the body or query.
+    if (!requestHasOperatorApproval(req)) {
+      return res.status(403).json({
+        error: 'operator_approved=true is required for import restores',
+      });
+    }
+
     const { data } = req.body;
 
     if (!data || !Array.isArray(data)) {
@@ -139,7 +159,7 @@ exportRouter.post('/import', async (req, res) => {
             status_value: record.status_value,
             valid_from: record.valid_from,
             valid_to: record.valid_to,
-          });
+          }, { allowToolCallControlMarkup: true });
           if (validationError) {
             errors++;
             continue;
@@ -182,11 +202,20 @@ exportRouter.post('/import', async (req, res) => {
             confidence: record.confidence !== undefined ? record.confidence : 1.0,
             access_count: record.access_count || 0,
             active: record.active !== undefined ? record.active : true,
+            supersedes: record.supersedes || null,
             superseded_by: record.superseded_by || null,
+            superseded_at: record.superseded_at || null,
+            deleted_at: record.deleted_at || null,
+            deletion_reason: record.deletion_reason || null,
             entities: record.entities || [],
             content_hash: contentHash,
             created_at: record.created_at || now,
             last_accessed_at: record.last_accessed_at || now,
+            ...((record.type === 'fact' || record.type === 'status') ? {
+              valid_from: record.valid_from || record.created_at || now,
+              valid_to: record.valid_to || null,
+            } : {}),
+            ...(record.metadata ? { metadata: scrubObject(record.metadata) } : {}),
             observed_by: record.observed_by || [record.source_agent || 'import'],
             observation_count: record.observation_count || 1,
             consolidated: record.consolidated || false,

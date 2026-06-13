@@ -5,6 +5,7 @@ import { complete, getLLMInfo } from '../services/llm/interface.js';
 import { isKeywordSearchAvailable, keywordSearch } from '../services/keyword-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
 import { getPoints } from '../services/pgvector.js';
+import { parseReflectionResponse, attachReflectionCitations } from '../services/reflect-utils.js';
 import { logError } from '../lib/log.js';
 
 export const reflectRouter = Router();
@@ -17,9 +18,9 @@ Analyze the memories below and return a JSON response:
 
 {
   "summary": "A concise 2-3 sentence synthesis of what these memories collectively say about the topic",
-  "patterns": ["Pattern or theme you noticed across multiple memories"],
-  "timeline": ["Key events or changes in chronological order"],
-  "contradictions": ["Any conflicting information found between memories"],
+  "patterns": ["Pattern or theme you noticed, ending with its source [mem:<id>] citation(s)"],
+  "timeline": ["Key events or changes in chronological order, each ending with its source [mem:<id>] citation(s)"],
+  "contradictions": ["Conflicting information found between memories, ending with the [mem:<id>] citations of the conflicting memories"],
   "gaps": ["What's missing — questions that the memories don't answer but should"]
 }
 
@@ -28,6 +29,7 @@ Rules:
 - Timeline entries should include approximate dates if available
 - Only flag real contradictions, not just different aspects of the same thing
 - Gaps should be actionable — things worth investigating or recording
+- Ground every patterns/timeline/contradictions entry: end it with the source memory id(s) it came from as [mem:<id>], copied exactly from the <memory id="..."> tag. Cite only ids that appear in the MEMORIES; never invent one.
 - If a section has no entries, return an empty array
 - Return valid JSON only, no markdown fences
 
@@ -119,33 +121,29 @@ reflectRouter.post('/', async (req, res) => {
     const prompt = REFLECT_PROMPT + escapeXml(topic) + '\n\nMEMORIES:\n' + memoriesText;
     const responseText = await complete(prompt);
 
-    // Parse LLM response
+    // Parse the LLM response (tolerant of code fences / trailing prose).
     let reflection;
     try {
-      let jsonText = responseText.trim();
-      const fenceMatch = jsonText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
-      if (fenceMatch) jsonText = fenceMatch[1].trim();
-      reflection = JSON.parse(jsonText);
+      reflection = parseReflectionResponse(responseText);
     } catch (e) {
       console.error('[reflect] LLM returned invalid JSON:', responseText.slice(0, 300));
       return res.status(502).json({ error: 'LLM returned invalid JSON response' });
     }
 
-    // Validate structure
-    const ensureArray = (val) => Array.isArray(val) ? val : [];
-    reflection = {
-      summary: typeof reflection.summary === 'string' ? reflection.summary : '',
-      patterns: ensureArray(reflection.patterns),
-      timeline: ensureArray(reflection.timeline),
-      contradictions: ensureArray(reflection.contradictions),
-      gaps: ensureArray(reflection.gaps),
-    };
+    // Ground the synthesis: strip any [mem:<id>] citation that references a
+    // memory not actually retrieved (an LLM-fabricated source), and surface the
+    // deduped set of cited ids for auditability.
+    const { reflection: grounded, cited_memory_ids } = attachReflectionCitations(
+      reflection,
+      memories.map(m => m.id)
+    );
 
     res.json({
       topic,
       client_id: client_id || null,
       memories_analyzed: memories.length,
-      reflection,
+      reflection: grounded,
+      cited_memory_ids,
       llm: getLLMInfo(),
     });
   } catch (err) {

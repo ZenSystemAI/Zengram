@@ -5,7 +5,7 @@ const buckets = new Map(); // key -> { writes: { count, windowStart }, reads: { 
 const LIMITS = {
   write: { max: parseInt(process.env.RATE_LIMIT_WRITES) || 60, windowMs: 60_000 },
   read: { max: parseInt(process.env.RATE_LIMIT_READS) || 120, windowMs: 60_000 },
-  consolidation: { max: 1, windowMs: 3_600_000 }, // 1 per hour
+  consolidation: { max: parseInt(process.env.RATE_LIMIT_CONSOLIDATION) || 10, windowMs: 3_600_000 },
 };
 
 function getBucket(apiKey, type) {
@@ -33,6 +33,9 @@ function checkLimit(apiKey, type) {
 // Classify route + method into a rate limit type
 function classifyRequest(method, path) {
   if (path.startsWith('/consolidate') && method === 'POST') return 'consolidation';
+  // /research runs an LLM loop (several completions per call) — bucket it with
+  // consolidation so it can never be hammered like a normal write.
+  if (path.startsWith('/research') && method === 'POST') return 'consolidation';
   if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') return 'write';
   return 'read';
 }

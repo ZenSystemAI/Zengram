@@ -373,10 +373,10 @@ curl -H "x-api-key: KEY" \
 curl -X POST http://localhost:8084/export/import \
   -H "x-api-key: KEY" \
   -H "Content-Type: application/json" \
-  -d '{"data": [{"type":"fact","content":"...","source_agent":"import","client_id":"acme"}]}'
+  -d '{"operator_approved": true, "data": [{"type":"fact","content":"...","source_agent":"import","client_id":"acme"}]}'
 ```
 
-Max 500 records per call. Deduplicates by content hash (tenant-scoped). Re-embeds with current provider. Processes in batches of 10 with 100ms delays.
+**Requires `operator_approved: true`** (in the body or as a query param) -- import overwrites live memories, so the destructive restore is gated; without it the endpoint returns `403`. Max 500 records per call. Deduplicates by content hash (tenant-scoped). Re-embeds with current provider. Restores the full record shape (`supersedes`, `valid_from`/`valid_to`, `deleted_at`, scrubbed `metadata`, etc.). Processes in batches of 10 with 100ms delays.
 
 ---
 
@@ -447,9 +447,57 @@ curl -X POST http://localhost:8084/reflect \
     "contradictions": ["..."],
     "gaps": ["..."]
   },
+  "cited_memory_ids": ["uuid-1", "uuid-2"],
   "llm": {"provider": "openai", "model": "gpt-4o-mini"}
 }
 ```
+
+Patterns, timeline, and contradiction entries end with `[mem:<id>]` citations copied from the analyzed memories; any citation referencing a memory that wasn't retrieved is stripped, and the surviving ids are deduped into `cited_memory_ids`.
+
+---
+
+## Research
+
+### POST /research -- Agentic Multi-Hop Retrieval
+
+Iterate-until-sufficient retrieval for hard multi-hop questions. Bounded loop: retrieve, judge sufficiency (drafting an answer and naming the missing facts), requery the named gap, repeat, then synthesize a grounded answer with per-claim `[mem:<id>]` citations.
+
+**OFF by default** -- the server must set `RESEARCH_ENABLED=true`, otherwise this returns `503`. Heavyweight (several LLM calls) and rate-limited together with consolidation.
+
+```bash
+curl -X POST http://localhost:8084/research \
+  -H "x-api-key: KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "which decision superseded the caching approach, and what status did it leave the API in?", "max_iterations": 3}'
+```
+
+**Body Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | Yes | The full multi-hop question (phrase it as a question, not a keyword) |
+| `client_id` | string | No | Scope to a specific client |
+| `max_iterations` | number | No | Retrieval rounds before synthesis (1-4, default 2) |
+
+**Response:**
+
+```json
+{
+  "topic": "...",
+  "answer": "... grounded answer with [mem:<id>] citations ...",
+  "key_findings": ["... [mem:<id>]"],
+  "unresolved": ["..."],
+  "cited_memory_ids": ["uuid-1", "uuid-2"],
+  "partial": false,
+  "iterations": 2,
+  "memories_analyzed": 18,
+  "query_trace": [{"query": "...", "retrieved": 12, "cumulative": 12}],
+  "sufficiency": {"status": "SUFFICIENT", "reason": "...", "missing": []},
+  "llm": {"provider": "openai", "model": "gpt-4o-mini"}
+}
+```
+
+`partial: true` means the loop hit its iteration budget without the sufficiency gate declaring `SUFFICIENT`.
 
 ---
 
@@ -465,11 +513,13 @@ All errors follow this format:
 |--------|---------|
 | 400 | Invalid input (missing fields, bad types, content too long) |
 | 401 | Missing or invalid API key |
+| 403 | Import attempted without `operator_approved=true` |
 | 404 | Memory or entity not found |
 | 409 | Consolidation already running |
 | 429 | Rate limited (check `Retry-After` header) |
 | 500 | Internal server error |
-| 502 | LLM returned invalid response (reflect endpoint) |
+| 502 | LLM returned invalid response (reflect / research endpoints) |
+| 503 | Research disabled (`RESEARCH_ENABLED` unset) or LLM provider unavailable |
 
 ## Cross-References
 

@@ -137,7 +137,7 @@ curl -X POST http://localhost:8084/memory \
 
 ### MCP Server (Claude Code, Cursor, Windsurf)
 
-12 tools: `brain_store`, `brain_search`, `brain_briefing`, `brain_query`, `brain_stats`, `brain_consolidate`, `brain_entities`, `brain_delete`, `brain_update`, `brain_export`, `brain_import`, `brain_reflect`.
+13 tools: `brain_store`, `brain_search`, `brain_briefing`, `brain_query`, `brain_stats`, `brain_consolidate`, `brain_entities`, `brain_delete`, `brain_update`, `brain_export`, `brain_import`, `brain_reflect`, `brain_research`.
 
 ```json
 {
@@ -173,14 +173,14 @@ Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to y
 | [Architecture](docs/architecture.md) | System design, data flows, component inventory |
 | [Configuration](docs/configuration.md) | All environment variables |
 | [Data Model](docs/data-model.md) | Memory types, decay, dedup, supersedes logic |
-| [MCP Tools](docs/mcp-tools.md) | The 12 MCP tools agents use |
+| [MCP Tools](docs/mcp-tools.md) | The 13 MCP tools agents use |
 | [Operations](docs/operations.md) | Deployment, monitoring, failure modes |
 | [Benchmarks](docs/benchmarks.md) | Full LongMemEval methodology and results |
 | [Examples](examples/) | curl demo, Python client, multi-agent scenario |
 
 ## Roadmap
 
-**Recently shipped**: pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity, multi-path RRF search (vector + BM25) — [full changelog](CHANGELOG.md)
+**Recently shipped**: agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity, multi-path RRF search (vector + BM25) — [full changelog](CHANGELOG.md)
 
 **Coming next**: Automatic memory capture, hosted docs, LangChain/LlamaIndex integration
 

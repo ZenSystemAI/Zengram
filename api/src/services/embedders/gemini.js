@@ -1,4 +1,5 @@
 import fetchWithTimeout from '../fetch-with-timeout.js';
+import { embeddingDimensions } from './dimensions.js';
 
 const TASK_TYPE_MAP = {
   store: 'RETRIEVAL_DOCUMENT',
@@ -8,7 +9,7 @@ const TASK_TYPE_MAP = {
 export class GeminiEmbedder {
   constructor() {
     this.model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2-preview';
-    this.dimensions = parseInt(process.env.GEMINI_EMBEDDING_DIMS) || 3072;
+    this.dimensions = embeddingDimensions('GEMINI_EMBEDDING_DIMS', 3072);
     this.apiKey = process.env.GEMINI_API_KEY;
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
 

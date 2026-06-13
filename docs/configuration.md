@@ -26,8 +26,9 @@ Per-agent API keys were retired in v4. A single admin key (`BRAIN_API_KEY`) auth
 |----------|---------|-------------|
 | `RATE_LIMIT_WRITES` | `60` | Max write requests (POST/PUT/PATCH/DELETE) per minute per API key |
 | `RATE_LIMIT_READS` | `120` | Max read requests (GET) per minute per API key |
+| `RATE_LIMIT_CONSOLIDATION` | `10` | Max consolidation + research runs per hour per API key |
 
-Consolidation POST is hardcoded to 1 per hour per key (not configurable).
+`POST /consolidate` and `POST /research` share the consolidation bucket (both run LLM loops), so they can't be hammered like ordinary writes.
 
 ## Vector Store
 
@@ -113,6 +114,19 @@ Scheduled consolidation is now gated by corpus size. If the active corpus is bel
 - **High volume** (>100 memories/day): Consider `0 */3 * * *` (every 3 hours)
 - **Low volume** (<10 memories/day): `0 0 * * *` (once daily) is sufficient
 - **Manual only**: Set `CONSOLIDATION_ENABLED=false` and trigger via API when needed
+
+## Research (agentic retrieval)
+
+`POST /research` and the `brain_research` MCP tool run an iterate-until-sufficient retrieval loop (several LLM calls per request, using the same provider as consolidation). It is **off by default** and never touches the `GET /memory/search` hot path.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RESEARCH_ENABLED` | `false` | Set to `true` to enable `POST /research`. When unset the endpoint returns `503`. |
+| `MAX_RESEARCH_ITERS` | `2` | Retrieval rounds before synthesis (clamped 1-4). |
+| `RESEARCH_FETCH_PER_ITER` | `15` | Memories fetched per iteration. |
+| `RESEARCH_MAX_CONTEXT` | `40` | Max memories sent to the LLM per call. |
+
+The LLM provider initializes at startup when either `CONSOLIDATION_ENABLED` is on or `RESEARCH_ENABLED=true`, so research works even with the consolidation cron disabled.
 
 ## Memory Decay
 
