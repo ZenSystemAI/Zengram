@@ -338,10 +338,10 @@ describe('extractEntities — noise filtering (capitalized phrases)', () => {
   });
 
   it('keeps known system names', () => {
-    const text = 'Deployed Mission Center and Knowledge Base updates';
+    const text = 'Deployed Knowledge Base and Shared Brain updates';
     const entities = extractEntities(text, 'global', 'test');
     const names = entities.map(e => e.name);
-    assert.ok(names.includes('Mission Center'));
     assert.ok(names.includes('Knowledge Base'));
+    assert.ok(names.includes('Shared Brain'));
   });
 });

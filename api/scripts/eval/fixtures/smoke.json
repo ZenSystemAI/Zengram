@@ -1,0 +1,98 @@
+{
+  "_comment": "Tiny smoke fixture for the retrieval eval harness (SPIKE). All content is invented and generic — no real names, clients, or secrets. See docs/eval-harness.md.",
+  "memories": [
+    {
+      "id": "fact-staging-db-port",
+      "type": "fact",
+      "key": "staging-db-port",
+      "content": "The staging database for acme-corp runs on port 5544.",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-prod-db-port",
+      "type": "fact",
+      "key": "prod-db-port",
+      "content": "The production database for acme-corp runs on port 5432.",
+      "importance": "high"
+    },
+    {
+      "id": "fact-deploy-cadence",
+      "type": "fact",
+      "key": "deploy-cadence",
+      "content": "Deploy cadence is weekly, every Thursday at 14:00 UTC.",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-api-base-url",
+      "type": "fact",
+      "key": "api-base-url",
+      "content": "The acme-corp public API base URL is https://api.example.test/v2.",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-cache-ttl",
+      "type": "fact",
+      "key": "cache-ttl",
+      "content": "The CDN cache TTL for static assets is 86400 seconds (one day).",
+      "importance": "low"
+    },
+    {
+      "id": "event-incident-2026-05-payments",
+      "type": "event",
+      "content": "On 2026-05-03 the payments service had a 22-minute outage caused by an expired TLS certificate. Mitigation was certificate renewal plus an auto-renew cron.",
+      "importance": "high"
+    },
+    {
+      "id": "event-migration-postgres-16",
+      "type": "event",
+      "content": "Migrated the metadata store from Postgres 14 to Postgres 16 over the weekend; pgvector extension reinstalled and indexes rebuilt.",
+      "importance": "medium"
+    },
+    {
+      "id": "event-onboard-widget-feature",
+      "type": "event",
+      "content": "Shipped the onboarding-widget feature behind a flag for beta accounts; rollout to all accounts planned for next sprint.",
+      "importance": "low"
+    },
+    {
+      "id": "decision-queue-rabbitmq",
+      "type": "decision",
+      "content": "Decided to use RabbitMQ over Kafka for the job queue because the team already operates RabbitMQ and throughput needs are modest.",
+      "importance": "high"
+    },
+    {
+      "id": "status-billing-service-health",
+      "type": "status",
+      "subject": "billing-service",
+      "content": "billing-service is healthy; p95 latency 180ms, error rate under 0.1%.",
+      "importance": "medium"
+    }
+  ],
+  "queries": [
+    {
+      "q": "what port does the staging database listen on",
+      "expected_ids": ["fact-staging-db-port"],
+      "k": 5
+    },
+    {
+      "q": "how often do we deploy and on which day",
+      "expected_ids": ["fact-deploy-cadence"],
+      "k": 5
+    },
+    {
+      "q": "what caused the payments outage in May",
+      "expected_ids": ["event-incident-2026-05-payments"],
+      "k": 5
+    },
+    {
+      "q": "which message queue did we choose and why",
+      "expected_ids": ["decision-queue-rabbitmq"],
+      "k": 5
+    },
+    {
+      "q": "what are the database ports for acme-corp",
+      "expected_ids": ["fact-prod-db-port", "fact-staging-db-port"],
+      "k": 10
+    }
+  ]
+}
