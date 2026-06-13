@@ -42,9 +42,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ZenSystemAI/zengram.git"
+    "url": "git+https://github.com/ZenSystemAI/Zengram.git"
   },
-  "homepage": "https://github.com/ZenSystemAI/zengram",
+  "homepage": "https://github.com/ZenSystemAI/Zengram",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0"
   }
