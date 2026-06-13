@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { scrollPoints, getCollectionInfo, computeEffectiveConfidence } from '../services/pgvector.js';
+import { logError } from '../lib/log.js';
 
 export const briefingRouter = Router();
 
@@ -170,7 +171,7 @@ briefingRouter.get('/', async (req, res) => {
 
     res.json(briefing);
   } catch (err) {
-    console.error('[briefing]', err.message);
+    logError(req, '[briefing]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

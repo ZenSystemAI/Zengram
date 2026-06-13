@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { runConsolidation, startConsolidationJob, getJob, getConsolidationStatus } from '../services/consolidation.js';
+import { logError } from '../lib/log.js';
 
 export const consolidationRouter = Router();
 
@@ -18,7 +19,7 @@ consolidationRouter.post('/', async (req, res) => {
     }
     res.status(202).json(job);
   } catch (err) {
-    console.error('[consolidation]', err.message);
+    logError(req, '[consolidation]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -37,7 +38,7 @@ consolidationRouter.get('/status', async (req, res) => {
   try {
     res.json(getConsolidationStatus());
   } catch (err) {
-    console.error('[consolidation:status]', err.message);
+    logError(req, '[consolidation:status]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

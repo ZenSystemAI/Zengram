@@ -28,6 +28,11 @@ if (!process.env.BRAIN_API_KEY) {
   process.exit(1);
 }
 
+if (!process.env.POSTGRES_URL) {
+  console.error('[zengram] FATAL: POSTGRES_URL is required. Set it in .env or environment.');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 8084;
 const HOST = process.env.HOST || '127.0.0.1';

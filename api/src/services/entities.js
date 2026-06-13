@@ -43,30 +43,21 @@ const QUOTED_NAME_REGEX = /[""\u201C\u201D`]([^""\u201C\u201D`]{3,60})[""\u201C\
 
 // Known system/product names — maps to correct entity type
 const KNOWN_SYSTEMS = {
-  'agency system': 'system', 'mission center': 'system',
-  'shared brain': 'system', 'zengram': 'system',
-  'antigravity studio': 'system',
-  'prism hub': 'system', 'neo studio': 'system',
-  'site settings': 'system',
-  'design director': 'system', 'done gate': 'system',
-  'points tracker': 'system', 'knowledge base': 'system',
-  'knowledge wiki': 'system',
+  // Generic starter dictionary of system / product / client names -> entity type.
+  // The public repo ships GENERIC placeholders only (no real third-party data).
+  // Operators should replace these with the systems, products, and clients relevant
+  // to their own deployment; entities are also learned from the alias cache over time.
+  // Client placeholders — replace with your own clients
+  'acme corp': 'client', 'globex': 'client', 'initech': 'client',
+  // Internal-system / product examples
+  'shared brain': 'system', 'knowledge base': 'system', 'knowledge wiki': 'system',
+  'mission control': 'system',
+  // Commonly-referenced public platforms (useful defaults)
   'google fonts': 'technology', 'google maps': 'technology',
   'google ads': 'technology', 'google search': 'technology',
   'google analytics': 'technology', 'google tag manager': 'technology',
-  'brand voice': 'system', 'design system': 'system',
-  'prospect pipeline': 'system', 'prospect demos': 'system',
-  'agency brain': 'system', 'dispatch protocol': 'system',
-  'neo reports': 'system', 'quebec city': 'domain',
-  'search console': 'technology', 'claude code': 'agent',
-  'tag manager': 'technology',
-  'client pulse': 'system', 'tandem hub': 'system',
-  'tandem prism': 'system', 'demo scorer': 'system',
-  'zenprizm': 'system', 'zencrm': 'system', 'zenseo': 'system',
-  'zenvox': 'system', 'zensms': 'system', 'zensign': 'system',
-  'zenstudio': 'system', 'zenkit': 'system', 'zengate': 'system',
-  'expert local': 'client', 'dermka clinik': 'client',
-  'la canardiere': 'client', 'credit instant': 'client',
+  'search console': 'technology', 'tag manager': 'technology',
+  'claude code': 'agent',
 };
 
 // In-memory alias cache

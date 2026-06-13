@@ -4,6 +4,7 @@ import { embed } from '../services/embedders/interface.js';
 import {
   upsertPoint, searchPoints, updatePointPayload,
   findByPayload, computeEffectiveConfidence, getPoint, getPoints,
+  supersedeAndInsert, bumpAccessCounts,
 } from '../services/pgvector.js';
 import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
@@ -17,6 +18,7 @@ import { reciprocalRankFusion } from '../services/rrf.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
 import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
+import { logError } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 
@@ -87,32 +89,18 @@ memoryRouter.post('/', async (req, res) => {
       console.warn(`[memory:store] ${keyWarning} agent=${source_agent} content="${cleanContent.slice(0, 60)}..."`);
     }
 
-    if (type === 'fact' && req.body.key) {
-      // Find existing active fact with same key (targeted vector-store query)
+    // For keyed facts/statuses, the deactivate-prior + insert-new pair is performed
+    // atomically below via supersedeAndInsert (under a per-key advisory lock). Here we
+    // only do a best-effort read to populate payload.supersedes; the helper re-finds
+    // the prior row under the lock and returns the authoritative supersededId.
+    const isKeyedFact = type === 'fact' && req.body.key;
+    const isKeyedStatus = type === 'status' && req.body.subject;
+    if (isKeyedFact) {
       const matches = await findByPayload('key', req.body.key, { active: true, type: 'fact' }, 1);
-      if (matches.length > 0) {
-        supersedesId = matches[0].id;
-        await updatePointPayload(matches[0].id, {
-          active: false,
-          superseded_by: pointId,
-          superseded_at: now,
-          valid_to: now, // temporal: old fact no longer valid as of supersede time
-        });
-        deactivateMemory(matches[0].id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
-      }
-    } else if (type === 'status' && req.body.subject) {
-      // Find existing active status with same subject (targeted vector-store query)
+      if (matches.length > 0) supersedesId = matches[0].id;
+    } else if (isKeyedStatus) {
       const matches = await findByPayload('subject', req.body.subject, { active: true, type: 'status' }, 1);
-      if (matches.length > 0) {
-        supersedesId = matches[0].id;
-        await updatePointPayload(matches[0].id, {
-          active: false,
-          superseded_by: pointId,
-          superseded_at: now,
-          valid_to: now, // temporal: old status no longer valid as of supersede time
-        });
-        deactivateMemory(matches[0].id).catch(e => console.error('[memory:keyword-deactivate]', e.message));
-      }
+      if (matches.length > 0) supersedesId = matches[0].id;
     }
 
     const payload = {
@@ -190,8 +178,26 @@ memoryRouter.post('/', async (req, res) => {
       console.error('[memory:relevance] Scoring failed (non-blocking):', e.message);
     }
 
-    // Store in the vector store
-    await upsertPoint(pointId, vector, payload);
+    // Store in the vector store. Keyed facts/statuses go through the atomic
+    // supersede+insert (one transaction, advisory-locked, exactly one insert);
+    // everything else (events, decisions, keyless facts) uses upsertPoint. The
+    // new point is inserted EXACTLY ONCE per request — never via both paths.
+    if (isKeyedFact || isKeyedStatus) {
+      const keyField = isKeyedFact ? 'key' : 'subject';
+      const keyValue = isKeyedFact ? req.body.key : req.body.subject;
+      const { supersededId } = await supersedeAndInsert(
+        keyField, keyValue, pointId, vector, payload,
+        { superseded_by: pointId, superseded_at: now, valid_to: now },
+        undefined
+      );
+      supersedesId = supersededId;
+      // Keyword-index deactivation of the superseded row (fire-and-forget, after commit).
+      if (supersededId) {
+        deactivateMemory(supersededId).catch(e => console.error('[memory:keyword-deactivate]', e.message));
+      }
+    } else {
+      await upsertPoint(pointId, vector, payload);
+    }
 
     // Index in keyword search (fire-and-forget)
     if (isKeywordSearchAvailable()) {
@@ -259,7 +265,7 @@ memoryRouter.post('/', async (req, res) => {
       ...(keyWarning ? { warning: keyWarning } : {}),
     });
   } catch (err) {
-    console.error('[memory:store]', err.message);
+    logError(req, '[memory:store]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -504,34 +510,12 @@ memoryRouter.get('/search', async (req, res) => {
       results.splice(maxResults);
     }
 
-    // Async: increment access_count and update last_accessed_at for returned results (fire-and-forget).
-    // We fetch current point payloads in a single batch call before writing to reduce the race
-    // window where two concurrent searches both read the same stale access_count from search
-    // results and both write count+1 instead of count+2. A tiny race still exists between
-    // the getPoints read and the updatePointPayload write, but it is acceptable for a
-    // fire-and-forget decay-prevention counter.
+    // Bump access_count + last_accessed_at for the returned results in one atomic
+    // SQL statement (fire-and-forget — must not delay the search response).
     const pointIds = results.map(r => r.id);
     if (pointIds.length > 0) {
-      const now = new Date().toISOString();
-      getPoints(pointIds)
-        .then(freshPoints => {
-          const freshById = Object.fromEntries(
-            freshPoints.map(p => [p.id, p.payload || {}])
-          );
-          return Promise.all(
-            pointIds.map(id => {
-              const current = freshById[id];
-              const freshCount = current ? (current.access_count || 0) : 0;
-              return updatePointPayload(id, {
-                access_count: freshCount + 1,
-                last_accessed_at: now,
-              });
-            })
-          );
-        })
-        .catch(e => {
-          console.error('[memory:search] Access count update failed:', e.message);
-        });
+      bumpAccessCounts(pointIds, new Date().toISOString())
+        .catch(e => console.error('[memory:search] Access count update failed:', e.message));
     }
 
     // Retry with broader, keyword-only terms when the full query returned nothing.
@@ -580,7 +564,7 @@ memoryRouter.get('/search', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    console.error('[memory:search]', err.message);
+    logError(req, '[memory:search]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -618,7 +602,7 @@ memoryRouter.get('/query', async (req, res) => {
       results: results.results || [],
     });
   } catch (err) {
-    console.error('[memory:query]', err.message);
+    logError(req, '[memory:query]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -715,7 +699,7 @@ memoryRouter.patch('/:id', async (req, res) => {
       updated_fields: Object.keys(updatedPayload).filter(k => k !== 'updated_at'),
     });
   } catch (err) {
-    console.error('[memory:update]', err.message);
+    logError(req, '[memory:update]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -750,7 +734,7 @@ memoryRouter.delete('/:id', async (req, res) => {
       deleted_at: now,
     });
   } catch (err) {
-    console.error('[memory:delete]', err.message);
+    logError(req, '[memory:delete]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { contentHash as hashContent } from './scrub.js';
+import { contentHash as hashContent, scrubCredentials } from './scrub.js';
 import { complete, getLLMInfo } from './llm/interface.js';
 import { scrollPoints, updatePointPayload, upsertPoint, findByPayload, searchPoints } from './pgvector.js';
 import { embed } from './embedders/interface.js';
@@ -291,7 +291,7 @@ async function consolidateBatch(points, clientId) {
   // (a) the metadata.consolidation_type tag and (b) whether source memories
   // get superseded (merged) or just flagged consolidated (summary).
   const storeConsolidatedFact = async (item, { consolidationType, supersedeSources }) => {
-    const content = item.content;
+    const content = scrubCredentials(item.content);
     const contentHash = hashContent(content);
 
     // Exact-hash dedup, then semantic dedup before embedding a new point.
@@ -300,8 +300,11 @@ async function consolidateBatch(points, clientId) {
 
     const vector = await embed(content, 'store');
 
-    const similar = await searchPoints(vector, { active: true }, 1);
-    if (similar.length > 0 && similar[0].score >= SEMANTIC_DEDUP_THRESHOLD) { skipped++; return null; }
+    const sourceIds = new Set(item.source_memories || []);
+    // Fetch a few candidates so excluding our own sources still leaves real duplicates visible.
+    const similar = await searchPoints(vector, { active: true }, 5);
+    const external = similar.filter(s => !sourceIds.has(s.id));
+    if (external.length > 0 && external[0].score >= SEMANTIC_DEDUP_THRESHOLD) { skipped++; return null; }
 
     const newId = crypto.randomUUID();
     const targetClient = item.client_id || clientId;
@@ -368,7 +371,9 @@ async function consolidateBatch(points, clientId) {
   // Store contradictions as decision-type memories (need human/agent review)
   if (result.contradictions?.length > 0) {
     for (const contradiction of result.contradictions) {
-      const content = `CONTRADICTION DETECTED: ${contradiction.description}. Suggested resolution: ${contradiction.suggested_resolution}`;
+      const content = scrubCredentials(
+        `CONTRADICTION DETECTED: ${contradiction.description}. Suggested resolution: ${contradiction.suggested_resolution}`
+      );
       const vector = await embed(content, 'store');
       const contradictionId = crypto.randomUUID();
       const contradictionHash = hashContent(content);

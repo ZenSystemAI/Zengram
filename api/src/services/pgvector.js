@@ -7,7 +7,7 @@
 import pg from 'pg';
 import { getEmbeddingDimensions } from './embedders/interface.js';
 
-const POSTGRES_URL = process.env.POSTGRES_URL || 'postgresql://brain:brain_secret@postgres:5432/shared_brain';
+const POSTGRES_URL = process.env.POSTGRES_URL;
 
 // Effective-confidence decay applied on read to fact- and status-type memories.
 const DECAY_FACTOR = parseFloat(process.env.DECAY_FACTOR) || 0.98;
@@ -132,6 +132,71 @@ export async function upsertPoint(id, vector, payload, collection) {
   ]);
 }
 
+// Atomically supersede the prior active fact/status for this key/subject and insert
+// the new active row, under a per-key advisory lock so two concurrent writes can't
+// both insert an active row. keyField is 'key' (fact) or 'subject' (status).
+// supersedeFields are merged into the old row's JSONB ({ superseded_by, superseded_at, valid_to });
+// the old row's active column AND JSONB active flag are both set false to stay consistent.
+// Returns { supersededId } (null if there was no prior active row).
+//
+// NOTE: the INSERT column list below is kept in exact sync with upsertPoint above
+// (a transaction needs its own client.query). If columns change, update both.
+export async function supersedeAndInsert(keyField, keyValue, newId, vector, payload, supersedeFields, collection) {
+  const col = collection || 'shared_memories';
+  const vecLit = toVectorLiteral(vector);
+  const column = keyField === 'key' ? 'key' : 'subject';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize concurrent writers for this exact key/subject value.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [keyField, keyValue]);
+
+    const prior = await client.query(
+      `SELECT id FROM memories
+        WHERE ${column} = $1 AND active = true AND type = $2 AND collection = $3
+        ORDER BY created_at DESC LIMIT 1`,
+      [keyValue, payload.type, col]
+    );
+    let supersededId = null;
+    if (prior.rows.length > 0) {
+      supersededId = prior.rows[0].id;
+      await client.query(
+        `UPDATE memories SET active = false, payload = payload || $2::jsonb WHERE id = $1 AND collection = $3`,
+        [supersededId, JSON.stringify({ active: false, ...supersedeFields }), col]
+      );
+    }
+    // Insert the new active row inside the same transaction (mirror upsertPoint's columns).
+    await client.query(
+      `INSERT INTO memories (
+        id, vector, type, source_agent, client_id, content_hash,
+        key, subject, active, consolidated, importance, confidence,
+        access_count, created_at, last_accessed_at, payload, collection
+      ) VALUES (
+        $1, $2::vector, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        vector = EXCLUDED.vector,
+        payload = EXCLUDED.payload,
+        active = EXCLUDED.active`,
+      [
+        newId, vecLit, payload.type, payload.source_agent, payload.client_id || 'global',
+        payload.content_hash, payload.key || null, payload.subject || null,
+        payload.active !== false, payload.consolidated === true,
+        payload.importance || 'medium', payload.confidence ?? 1.0,
+        payload.access_count || 0, payload.created_at || new Date().toISOString(),
+        payload.last_accessed_at || null, payload, col,
+      ]
+    );
+    await client.query('COMMIT');
+    return { supersededId };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // --- Search ---
 //
 // Filter shape (from callers):
@@ -170,20 +235,25 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
     if (rf.range.gte !== undefined) {
       if (promoted.has(rf.key) || rf.key === 'created_at') {
         wheres.push(`${rf.key} >= $${pIdx++}`);
+        params.push(rf.range.gte);
       } else {
-        wheres.push(`(payload ->> $${pIdx++})::timestamptz >= $${pIdx++}`);
-        params.push(rf.key);
+        // NULL-tolerant: a row whose payload lacks this key passes the filter,
+        // so events/decisions (no valid_from) aren't silently dropped by at_time.
+        wheres.push(`((payload ->> $${pIdx}) IS NULL OR (payload ->> $${pIdx})::timestamptz >= $${pIdx + 1})`);
+        params.push(rf.key, rf.range.gte);
+        pIdx += 2;
       }
-      params.push(rf.range.gte);
     }
     if (rf.range.lte !== undefined) {
       if (promoted.has(rf.key) || rf.key === 'created_at') {
         wheres.push(`${rf.key} <= $${pIdx++}`);
+        params.push(rf.range.lte);
       } else {
-        wheres.push(`(payload ->> $${pIdx++})::timestamptz <= $${pIdx++}`);
-        params.push(rf.key);
+        // NULL-tolerant: see gte branch above.
+        wheres.push(`((payload ->> $${pIdx}) IS NULL OR (payload ->> $${pIdx})::timestamptz <= $${pIdx + 1})`);
+        params.push(rf.key, rf.range.lte);
+        pIdx += 2;
       }
-      params.push(rf.range.lte);
     }
   }
 
@@ -299,6 +369,27 @@ export async function updatePointPayload(pointIds, payloadUpdate, collection) {
 
   const sql = `UPDATE memories SET ${sets.join(', ')} WHERE id = ANY($1) AND collection = $3`;
   await pool.query(sql, params);
+}
+
+// Atomically increment access_count and stamp last_accessed_at for many ids in
+// one statement. Bumps both the promoted column and the mirrored payload keys so
+// the two stay consistent. Used on the hot search path; replaces a read-then-write
+// loop and removes the access_count race.
+export async function bumpAccessCounts(pointIds, now, collection) {
+  const ids = Array.isArray(pointIds) ? pointIds : [pointIds];
+  if (ids.length === 0) return;
+  const col = collection || 'shared_memories';
+  await pool.query(
+    `UPDATE memories
+       SET access_count = access_count + 1,
+           last_accessed_at = $2,
+           payload = payload || jsonb_build_object(
+             'access_count', COALESCE((payload->>'access_count')::int, 0) + 1,
+             'last_accessed_at', $2::text
+           )
+     WHERE id = ANY($1) AND collection = $3`,
+    [ids, now, col]
+  );
 }
 
 // --- Find by exact payload match ---

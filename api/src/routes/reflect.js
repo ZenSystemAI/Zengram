@@ -5,6 +5,7 @@ import { complete, getLLMInfo } from '../services/llm/interface.js';
 import { isKeywordSearchAvailable, keywordSearch } from '../services/keyword-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
 import { getPoints } from '../services/pgvector.js';
+import { logError } from '../lib/log.js';
 
 export const reflectRouter = Router();
 
@@ -148,7 +149,7 @@ reflectRouter.post('/', async (req, res) => {
       llm: getLLMInfo(),
     });
   } catch (err) {
-    console.error('[reflect]', err.message);
+    logError(req, '[reflect]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

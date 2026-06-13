@@ -31,8 +31,10 @@ export function resolveTemporalQuery(query, referenceDate) {
   if (!temporalPattern && /\btoday\b/i.test(q)) {
     const from = new Date(ref);
     from.setHours(0, 0, 0, 0);
+    const to = new Date(ref);
+    to.setHours(23, 59, 59, 999);
     dateFrom = from.toISOString();
-    dateTo = ref.toISOString();
+    dateTo = to.toISOString();
     temporalPattern = 'today';
   }
 
@@ -83,8 +85,10 @@ export function resolveTemporalQuery(query, referenceDate) {
       from.setHours(0, 0, 0, 0);
     }
 
+    const to = new Date(ref);
+    to.setHours(23, 59, 59, 999);
     dateFrom = from.toISOString();
-    dateTo = ref.toISOString();
+    dateTo = to.toISOString();
     temporalPattern = 'this_period';
   }
 
@@ -123,8 +127,10 @@ export function resolveTemporalQuery(query, referenceDate) {
   if (!temporalPattern && /\b(recently|recent)\b/i.test(q)) {
     const from = new Date(ref);
     from.setDate(from.getDate() - 14);
+    const to = new Date(ref);
+    to.setHours(23, 59, 59, 999);
     dateFrom = from.toISOString();
-    dateTo = ref.toISOString();
+    dateTo = to.toISOString();
     temporalPattern = 'recent';
   }
 

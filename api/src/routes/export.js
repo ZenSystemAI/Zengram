@@ -10,6 +10,7 @@ import { scrubCredentials, contentHash as hashContent } from '../services/scrub.
 import { validateMemoryInput } from '../middleware/validate.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
+import { logError } from '../lib/log.js';
 
 export const exportRouter = Router();
 
@@ -82,7 +83,7 @@ exportRouter.get('/', async (req, res) => {
       filters: { client_id, type, since, active_only: active_only !== 'false' },
     });
   } catch (err) {
-    console.error('[export]', err.message);
+    logError(req, '[export]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -256,7 +257,7 @@ exportRouter.post('/import', async (req, res) => {
 
     res.json({ imported, skipped, errors });
   } catch (err) {
-    console.error('[import]', err.message);
+    logError(req, '[import]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

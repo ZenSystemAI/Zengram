@@ -5,6 +5,7 @@ import {
 } from '../services/stores/interface.js';
 import { reclassifyEntity } from '../services/entities.js';
 import { batchUpdateEntityType } from '../services/pgvector.js';
+import { logError } from '../lib/log.js';
 
 export const entitiesRouter = Router();
 
@@ -29,7 +30,7 @@ entitiesRouter.get('/', async (req, res) => {
       entities: result.results,
     });
   } catch (err) {
-    console.error('[entities]', err.message);
+    logError(req, '[entities]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -43,7 +44,7 @@ entitiesRouter.get('/stats', async (req, res) => {
     const stats = await getEntityStats();
     res.json(stats);
   } catch (err) {
-    console.error('[entities:stats]', err.message);
+    logError(req, '[entities:stats]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -130,28 +131,11 @@ entitiesRouter.post('/reclassify', async (req, res) => {
           vector_scanned: vectorResult.total_scanned,
         });
 
-        // 3. Log reclassification as an event in the brain (fire-and-forget)
-        try {
-          const internalUrl = `http://localhost:${process.env.PORT || 8084}/memory`;
-          const apiKey = req.headers['x-api-key'];
-          fetch(internalUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(apiKey ? { 'x-api-key': apiKey } : {}),
-            },
-            body: JSON.stringify({
-              type: 'event',
-              content: `Entity reclassified: "${entity.canonical_name}" changed from ${oldType} to ${entry.new_type}. ${storeResult.memories_affected} memories linked, ${vectorResult.total_updated} vector payloads updated.`,
-              source_agent: 'system',
-              client_id: 'global',
-              category: 'episodic',
-              importance: 'medium',
-            }),
-          }).catch(e => console.error('[entities:reclassify:log]', e.message));
-        } catch (e) {
-          console.error('[entities:reclassify:log]', e.message);
-        }
+        // 3. Log the reclassification locally. (Previously this wrote an in-brain
+        // audit event via a self-HTTP POST to /memory that forwarded the inbound
+        // API key — removed: it coupled an internal write to the caller's auth and
+        // added a pointless network hop. The event was redundant and not read anywhere.)
+        console.log(`[entities:reclassify] "${entity.canonical_name}" changed from ${oldType} to ${entry.new_type}. ${storeResult.memories_affected} memories linked, ${vectorResult.total_updated} vector payloads updated.`);
       }
     }
 
@@ -161,7 +145,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
       dry_run: isDryRun,
     });
   } catch (err) {
-    console.error('[entities:reclassify]', err.message);
+    logError(req, '[entities:reclassify]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -186,7 +170,7 @@ entitiesRouter.get('/:name', async (req, res) => {
       aliases: entity.aliases || [],
     });
   } catch (err) {
-    console.error('[entities:get]', err.message);
+    logError(req, '[entities:get]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -218,7 +202,7 @@ entitiesRouter.delete('/:name', async (req, res) => {
       id: entity.id,
     });
   } catch (err) {
-    console.error('[entities:delete]', err.message);
+    logError(req, '[entities:delete]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -304,7 +288,7 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
       alias_created: secondary.canonical_name,
     });
   } catch (err) {
-    console.error('[entities:merge]', err.message);
+    logError(req, '[entities:merge]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -329,7 +313,7 @@ entitiesRouter.get('/:name/memories', async (req, res) => {
       memory_links: links.results,
     });
   } catch (err) {
-    console.error('[entities:memories]', err.message);
+    logError(req, '[entities:memories]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

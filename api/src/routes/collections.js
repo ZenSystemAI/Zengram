@@ -4,6 +4,7 @@ import {
   resolveCollection, validateCollectionSlug, registerCollection,
   unregisterCollection, listCollections, getDefaultCollection,
 } from '../services/collection-registry.js';
+import { logError } from '../lib/log.js';
 
 export const collectionsRouter = Router();
 
@@ -31,7 +32,7 @@ collectionsRouter.get('/', async (req, res) => {
 
     res.json({ collections: merged });
   } catch (err) {
-    console.error('[collections:list]', err.message);
+    logError(req, '[collections:list]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -63,7 +64,7 @@ collectionsRouter.post('/', async (req, res) => {
       created_at: new Date().toISOString(),
     });
   } catch (err) {
-    console.error('[collections:create]', err.message);
+    logError(req, '[collections:create]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -78,7 +79,7 @@ collectionsRouter.get('/:name', async (req, res) => {
     }
     res.json({ name: collectionName, ...info });
   } catch (err) {
-    console.error('[collections:get]', err.message);
+    logError(req, '[collections:get]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -99,7 +100,7 @@ collectionsRouter.delete('/:name', async (req, res) => {
 
     res.json({ deleted: true, name: collectionName });
   } catch (err) {
-    console.error('[collections:delete]', err.message);
+    logError(req, '[collections:delete]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

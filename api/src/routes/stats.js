@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getMemoryStats, scrollPoints, computeEffectiveConfidence, DECAY_TYPES } from '../services/pgvector.js';
 import { isEntityStoreAvailable, getEntityStats } from '../services/stores/interface.js';
 import { isKeywordSearchAvailable, getKeywordIndexCount } from '../services/keyword-search.js';
+import { logError } from '../lib/log.js';
 
 export const statsRouter = Router();
 
@@ -52,7 +53,7 @@ statsRouter.get('/', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('[stats]', err.message);
+    logError(req, '[stats]', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
