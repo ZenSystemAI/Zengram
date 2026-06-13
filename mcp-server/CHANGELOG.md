@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.0 (2026-06-12)
+
+Cleanup and hardening release. See the root [CHANGELOG](../CHANGELOG.md) for full project history (3.x–4.1 are covered there).
+
+- Tool descriptions and docs realigned to the v4 surface (12 tools; Postgres + pgvector; no Qdrant/SDK/graph).
+- Security: API key accepted from the `x-api-key` header only.
+- Dependency/CI hygiene: `npm ci` everywhere, fixed the npm publish version guard, added an `engines` floor (Node >=20) and a tighter SDK version floor.
+
 ## 2.4.0 (2026-03-28)
 
 ### New MCP Tools

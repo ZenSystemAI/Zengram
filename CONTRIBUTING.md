@@ -13,14 +13,14 @@ Thanks for your interest in contributing! This project aims to be the best open-
 ## Prerequisites
 
 - **Node.js 20+** (required -- the codebase uses modern ES module features)
-- Docker (for Qdrant)
+- Docker (for Postgres + pgvector)
 - An OpenAI or Gemini API key (or local Ollama for embeddings)
 
 ## Development Setup
 
 ```bash
 # Start infrastructure
-docker compose up -d qdrant
+docker compose up -d postgres
 
 # Run the API in dev mode
 cd api
@@ -42,13 +42,13 @@ cd api
 npm test
 ```
 
-Tests cover validation middleware, entity extraction, credential scrubbing, RRF fusion, webhook notifications, and client resolution. All tests must pass before submitting a PR.
+Tests cover validation middleware, entity extraction, credential scrubbing, and RRF fusion. All tests must pass before submitting a PR.
 
 ## Project Structure
 
 - **`api/`** — Express API server (the core)
 - **`mcp-server/`** — MCP server for Claude Code / Cursor
-- **`adapters/`** — Integration adapters (bash CLI, n8n workflow)
+- **`adapters/`** — Integration adapters (bash CLI, Claude Code session-end skill)
 
 ## What to Contribute
 

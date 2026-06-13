@@ -149,7 +149,7 @@ curl -s "${API_URL}/briefing?since=${SINCE}&agent=another-agent" \
 # ---------------------------------------------------------------------------
 section "Query: Fact by key (structured lookup)"
 
-# Structured queries hit the database (SQLite/Postgres/Baserow), not Qdrant.
+# Structured queries hit the Postgres structured store, not the vector index.
 # Useful for exact lookups: "give me the fact with key X".
 curl -s "${API_URL}/memory/query?type=facts&key=acme-prod-db-host" \
   -H "${header_auth}" | jq .
@@ -192,28 +192,7 @@ curl -s "${API_URL}/entities/acme-corp" \
   -H "${header_auth}" | jq .
 
 # ---------------------------------------------------------------------------
-# 12. Client briefing — everything known about a client
-# ---------------------------------------------------------------------------
-section "Client: Briefing"
-
-# Returns all memories for a client grouped by knowledge_category:
-# brand, strategy, meeting, content, technical, relationship, general.
-# Supports fuzzy name resolution.
-curl -s "${API_URL}/client/acme-corp" \
-  -H "${header_auth}" | jq .
-
-# ---------------------------------------------------------------------------
-# 13. Entity relationship graph — graph data as JSON
-# ---------------------------------------------------------------------------
-section "Graph: Entity Relationships (JSON)"
-
-# Get entity relationships as a node/edge graph centered on an entity.
-# Use format=html (or visit /graph in a browser) for interactive D3.js viz.
-curl -s "${API_URL}/graph?format=json&entity=acme-corp&depth=2" \
-  -H "${header_auth}" | jq .
-
-# ---------------------------------------------------------------------------
-# 14. Export — backup all memories as JSON
+# 12. Export — backup all memories as JSON
 # ---------------------------------------------------------------------------
 section "Export: Backup memories"
 
@@ -225,21 +204,20 @@ curl -s "${API_URL}/export?client_id=acme-corp" \
 echo "  (showing memory count only — pipe to a file for full backup)"
 
 # ---------------------------------------------------------------------------
-# 15. Import — restore from a previous export
+# 13. Import — restore from a previous export
 # ---------------------------------------------------------------------------
 section "Import: Restore memories"
 
 # Imports memories from a previous export. Handles deduplication.
-# In practice you would pipe a backup file: -d @backup.json
-echo '  (skipping import demo — use: curl -X POST "${API_URL}/import" -d @backup.json)'
+# In practice you would pipe a backup file to POST /export/import: -d @backup.json
+echo '  (skipping import demo — use: curl -X POST "${API_URL}/export/import" -d @backup.json)'
 
 # ---------------------------------------------------------------------------
-# 16. Delete — soft-delete a memory
+# 14. Delete — soft-delete a memory
 # ---------------------------------------------------------------------------
 section "Delete: Soft-delete a memory"
 
-# Soft-deletes a memory (marks inactive). Agent-scoped keys can only
-# delete their own memories. The reason field is optional but logged.
+# Soft-deletes a memory (marks inactive). The reason field is optional but logged.
 # Using a placeholder ID here — replace with a real ID from a store response.
 echo '  (skipping delete demo — use: curl -X DELETE "${API_URL}/memory/YOUR-ID" -H "X-Api-Key: ..." -d '"'"'{"reason": "outdated"}'"'"')'
 

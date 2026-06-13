@@ -43,11 +43,11 @@ Can the LLM answer correctly given the retrieved memories?
 
 ## Methodology
 
-The benchmark runner (`benchmarks/longmemeval/query-direct.js`) bypasses the Express API and queries Qdrant directly with raw cosine similarity vector search. This was necessary due to networking constraints between the benchmark runner and the Docker-hosted API.
+The benchmark runner (`benchmarks/longmemeval/query-direct.js`) bypasses the Express API and queries the pgvector store directly with raw cosine similarity vector search. This was necessary due to networking constraints between the benchmark runner and the Docker-hosted API.
 
 **API features NOT used in this benchmark:**
 
-- Multi-path search (vector + BM25 keyword + entity graph RRF fusion) -- **not used**
+- Multi-path search (vector + BM25 keyword RRF fusion) -- **not used**
 - Temporal date filtering / proximity boost -- **not used**
 - Query expansion -- **not used**
 - Session diversity re-ranking -- **not used**
@@ -64,7 +64,7 @@ The +21.1 point gain on temporal reasoning from swapping GPT-4o-mini to GPT-4o p
 ```bash
 cd benchmarks/longmemeval
 npm install
-# Requires: Qdrant instance with populated memories, OpenAI API key
+# Requires: Postgres (pgvector) instance with populated memories, OpenAI API key
 node query-direct.js
 node evaluate.js
 ```

@@ -12,11 +12,11 @@
 
 ```bash
 # Clone and configure
-cd /path/to/multi-agent
+cd /path/to/zengram
 cp .env.example .env
-# Edit .env — at minimum set BRAIN_API_KEY, QDRANT_API_KEY, and an embedding key
+# Edit .env — at minimum set BRAIN_API_KEY and an embedding key
 
-# Start core services (Qdrant + API with SQLite)
+# Start core services (Postgres + API)
 docker-compose up -d
 
 # Verify health
@@ -24,15 +24,12 @@ curl http://localhost:8084/health
 # Expected: {"status":"ok","service":"zengram","timestamp":"..."}
 ```
 
-### With Postgres (Production)
+### Postgres Connection
 
 ```bash
-# Start with Postgres profile
-docker-compose --profile postgres up -d
-
-# Update .env:
+# .env (Postgres is the only structured/vector backend):
 # STRUCTURED_STORE=postgres
-# POSTGRES_URL=postgresql://brain:brain_secret@postgres:5432/zengram
+# POSTGRES_URL=postgresql://brain:brain_secret@zengram-postgres:5432/shared_brain
 
 # Restart API to pick up changes
 docker-compose restart memory-api
@@ -53,8 +50,8 @@ docker-compose logs -f
 # API only
 docker-compose logs -f memory-api
 
-# Qdrant only
-docker-compose logs -f qdrant
+# Postgres only
+docker-compose logs -f postgres
 ```
 
 ## Health Monitoring
@@ -81,42 +78,31 @@ Key fields to monitor:
 | `active` / `superseded` | Ratio depends on usage | If superseded >> active, consolidation is working |
 | `decayed_below_50pct` | Low (< 5% of facts) | High count means facts are going stale without access |
 | `retrieval.multi_path` | `true` | `false` means only vector search is active |
-| `retrieval.keyword_search` | `true` | `false` if no structured store configured |
-| `retrieval.graph_search` | `true` | `false` if no entity store (baserow/none backend) |
+| `retrieval.keyword_search` | `true` | `false` if the keyword index is unavailable |
 | `entities.total` | Growing | Zero means entity extraction is failing |
-
-### Dashboard
-
-Browse `http://localhost:8084/dashboard` for a visual stats overview. No authentication required for the HTML page; the embedded JavaScript uses the API key from the URL or prompts for one.
-
-### Knowledge Graph Visualization
-
-Browse `http://localhost:8084/graph/html?key=YOUR_KEY` for the interactive entity browser with D3.js force-directed graphs.
 
 ## Common Failure Modes
 
-### 1. Express Health Check Failing (39K+ Vector Stress)
+### 1. Express Health Check Failing (High Vector Count)
 
 **Symptom**: Docker reports `zengram-api` as unhealthy. API requests time out or return 502.
 
-**Root Cause**: At 39K+ vectors, some Qdrant operations (scroll, count) exceed the default timeout. The health check itself is lightweight (`GET /health` does not query Qdrant), but heavy API operations can cause cascading slowness.
+**Root Cause**: At high vector counts, some Postgres operations (scroll, count) can exceed the request timeout. The health check itself is lightweight (`GET /health` does not query the database), but heavy API operations can cause cascading slowness.
 
 **Resolution**:
-- Increase Qdrant timeout: `QDRANT_TIMEOUT_MS=15000` or `20000` (default is 10000)
-- The `scrollPoints` function uses this timeout for all Qdrant HTTP requests
-- Run consolidation to merge/expire old memories and reduce collection size
+- Run consolidation to merge/expire old memories and reduce the table size
 - Monitor `total_memories` via `/stats` and consolidate proactively
+- Ensure the pgvector HNSW and payload indexes exist (they are created at startup)
 
-**Lesson learned**: The 39K vector stress test revealed that Qdrant count queries with `exact: true` are the bottleneck at scale. The stats endpoint runs 6+ count queries in parallel; under load this can saturate Qdrant.
+**Lesson learned**: Exact count queries over the full table are the bottleneck at scale. The stats endpoint runs several count queries in parallel; under load this can pressure Postgres.
 
-### 2. Qdrant Out of Memory
+### 2. Postgres Out of Memory
 
-**Symptom**: Qdrant container killed by OOM, restarts repeatedly.
+**Symptom**: Postgres container killed by OOM, restarts repeatedly.
 
 **Resolution**:
-- Check vector count: `curl http://localhost:6334/collections/shared_memories`
-- Qdrant stores vectors in memory; each 3072-dim float32 vector uses ~12KB
-- At 50K vectors with 3072 dims: ~600MB RAM minimum
+- Check vector count via `/stats` (`vectors_count`)
+- Each 3072-dim float32 vector uses ~12KB; an HNSW index adds graph overhead
 - Reduce dimensions: switch to 1536 (`GEMINI_EMBEDDING_DIMS=1536`) -- Gemini supports Matryoshka
 - Add memory limits to Docker: edit `docker-compose.yml` to add `mem_limit: 2g`
 - Run consolidation to expire unused old events
@@ -157,10 +143,9 @@ Browse `http://localhost:8084/graph/html?key=YOUR_KEY` for the interactive entit
 **Symptom**: `retrieval.keyword_search: false` in stats. Only vector search results returned.
 
 **Resolution**:
-- Keyword search requires `STRUCTURED_STORE=sqlite` or `STRUCTURED_STORE=postgres`
-- If set to `baserow` or `none`, keyword search is disabled
-- For Postgres: the `memory_search` table needs a `content_tsv` generated column with GIN index
-- For SQLite: the `memory_search_fts` FTS5 virtual table is created automatically
+- Keyword search requires `STRUCTURED_STORE=postgres` (the only supported backend)
+- The `memory_search` table needs a `content_tsv` generated column with a GIN index (created at startup)
+- Run the keyword backfill script if existing memories predate the index
 
 ## Backup and Restore
 
@@ -196,19 +181,18 @@ curl -X POST -H "x-api-key: KEY" \
 
 Import re-embeds with the current provider, so switching embedding providers is safe -- just export and reimport.
 
-### Qdrant Data Directory
+### Postgres Data Directory
 
-Raw Qdrant storage is at `./data/qdrant/`. For bare-metal backup:
+Raw Postgres storage (vectors + structured tables) is at `./data/postgres/`. For a bare-metal snapshot:
 ```bash
-docker-compose stop qdrant
-cp -r ./data/qdrant ./data/qdrant-backup-$(date +%Y%m%d)
-docker-compose start qdrant
+docker-compose stop postgres
+cp -r ./data/postgres ./data/postgres-backup-$(date +%Y%m%d)
+docker-compose start postgres
 ```
 
-### SQLite Database
-
+For a logical dump instead:
 ```bash
-cp ./data/brain.db ./data/brain-backup-$(date +%Y%m%d).db
+docker exec zengram-postgres pg_dump -U brain shared_brain > brain-$(date +%Y%m%d).sql
 ```
 
 ## Restart Procedures
@@ -230,7 +214,7 @@ docker-compose up -d
 
 ```bash
 docker-compose down -v
-rm -rf ./data/qdrant ./data/brain.db ./data/postgres
+rm -rf ./data/postgres
 docker-compose up -d
 ```
 
@@ -262,20 +246,18 @@ All log lines use bracketed prefixes for grep-friendly filtering:
 | Prefix | Component |
 |--------|-----------|
 | `[zengram]` | Startup, shutdown, top-level events |
-| `[qdrant]` | Qdrant collection/index operations |
+| `[pgvector]` | pgvector collection/index operations |
 | `[embeddings]` | Embedding provider init/errors |
 | `[store]` | Structured store operations |
 | `[memory:store]` | POST /memory write path |
 | `[memory:search]` | GET /memory/search |
+| `[memory:query]` | GET /memory/query |
 | `[memory:update]` | PATCH /memory/:id |
 | `[memory:delete]` | DELETE /memory/:id |
 | `[consolidation]` | Consolidation engine runs |
 | `[entities]` | Entity extraction and alias cache |
 | `[keyword-search]` | BM25 keyword search |
-| `[webhook:n8n]` | n8n webhook ingestion |
-| `[subscribe]` | SSE subscription lifecycle |
-| `[notifications]` | Webhook dispatch |
-| `[auth]` | Agent key loading |
+| `[collections]` | Multi-collection management |
 | `[reflect]` | LLM reflection |
 
 ## Cross-References

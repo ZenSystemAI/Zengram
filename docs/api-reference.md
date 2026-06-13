@@ -2,16 +2,15 @@
 
 Base URL: `http://localhost:8084`
 
-All endpoints except `/health` and `/dashboard` require the `x-api-key` header.
+All endpoints except `/health` require the `x-api-key` header.
 
 ## Authentication
 
 ```
-x-api-key: <BRAIN_API_KEY or AGENT_KEY_*>
+x-api-key: <BRAIN_API_KEY>
 ```
 
-- **Admin key** (`BRAIN_API_KEY`): full access, no agent identity binding
-- **Agent keys** (`AGENT_KEY_<name>`): binds `req.authenticatedAgent` to the agent name; `source_agent` must match on writes; agents can only update/delete their own memories
+A single admin key (`BRAIN_API_KEY`) authenticates every caller — full access, no agent identity binding. Per-agent keys were retired in v4; all writes are attributed to `source_agent: "claude-code"`.
 
 All responses include an `x-request-id` header (pass your own via the request header or one is generated).
 
@@ -83,7 +82,7 @@ curl -X POST http://localhost:8084/memory \
   "content_hash": "abc123def456",
   "deduplicated": false,
   "supersedes": "old-uuid-or-null",
-  "stored_in": { "qdrant": true, "structured_db": true }
+  "stored_in": { "vector": true, "structured_db": true }
 }
 ```
 
@@ -133,7 +132,7 @@ curl -H "x-api-key: KEY" \
 | `limit` | number | No | Max results (default 10, max 100) |
 | `format` | string | No | `compact` (200 char truncated), `full` (with retrieval sources) |
 | `include_superseded` | string | No | `"true"` to include inactive memories |
-| `entity` | string | No | Filter by entity name (disables multi-path, Qdrant-only) |
+| `entity` | string | No | Filter by entity name (disables multi-path, vector-only) |
 | `at_time` | string | No | ISO 8601 timestamp for temporal query ("what was true at X?") |
 
 **Response:**
@@ -157,7 +156,7 @@ curl -H "x-api-key: KEY" \
   ],
   "retrieval": {
     "multi_path": true,
-    "paths": { "vector": 8, "keyword": 3, "graph": 2 }
+    "paths": { "vector": 8, "keyword": 3 }
   }
 }
 ```
@@ -210,8 +209,6 @@ curl -X PATCH http://localhost:8084/memory/UUID \
 | `knowledge_category` | string | New knowledge category |
 | `metadata` | object | New metadata (replaces existing) |
 
-Agent-scoped keys can only update memories where `source_agent` matches the authenticated agent.
-
 **Response:**
 
 ```json
@@ -232,7 +229,7 @@ curl -X DELETE http://localhost:8084/memory/UUID \
   -d '{"reason": "Incorrect information"}'
 ```
 
-Sets `active: false`. Memory remains in storage but is excluded from search. Agent-scoped keys can only delete their own memories.
+Sets `active: false`. Memory remains in storage but is excluded from search.
 
 **Response:**
 
@@ -294,8 +291,7 @@ curl -H "x-api-key: KEY" http://localhost:8084/stats
   "retrieval": {
     "multi_path": true,
     "keyword_search": true,
-    "keyword_index_count": 1523,
-    "graph_search": true
+    "keyword_index_count": 1523
   }
 }
 ```
@@ -330,14 +326,6 @@ Resolves aliases: if you pass "nextjs" it resolves to "Next.js".
 curl -H "x-api-key: KEY" "http://localhost:8084/entities/Next.js/memories?limit=20"
 ```
 
-### GET /entities/reclassify/suggestions -- Auto-Detect Misclassifications
-
-```bash
-curl -H "x-api-key: KEY" http://localhost:8084/entities/reclassify/suggestions
-```
-
-Returns heuristic-based suggestions for entities whose type seems wrong.
-
 ### POST /entities/reclassify -- Reclassify Entity Types
 
 ```bash
@@ -346,82 +334,14 @@ curl -X POST http://localhost:8084/entities/reclassify \
   -H "Content-Type: application/json" \
   -d '{
     "reclassifications": [
-      {"name": "Baserow", "new_type": "technology"}
+      {"name": "PostgreSQL", "new_type": "technology"}
     ],
     "dry_run": true
   }'
 ```
 
 - `dry_run: true` (default): preview changes without applying
-- `dry_run: false`: updates entity type in structured store, updates all Qdrant payloads in chunks of 100, logs reclassification as an event
-
----
-
-## Graph
-
-### GET /graph/:entity -- Entity Graph (JSON)
-
-```bash
-curl -H "x-api-key: KEY" "http://localhost:8084/graph/Next.js?depth=2&min_strength=1"
-```
-
-Returns `{nodes: [...], edges: [...], center: "Next.js"}` for D3.js consumption.
-
-### GET /graph/:entity/html -- Entity Graph (Interactive HTML)
-
-```bash
-# Opens in browser
-open "http://localhost:8084/graph/Next.js/html?depth=2"
-```
-
-### GET /graph/html -- Entity Browser Index
-
-```bash
-open "http://localhost:8084/graph/html?key=YOUR_KEY"
-```
-
-Lists all entities grouped by type with links to individual graph visualizations.
-
-### GET /graph/full/html -- Full Brain Graph
-
-```bash
-open "http://localhost:8084/graph/full/html"
-```
-
-Shows top 80 entities by mention count with co-occurrence edges.
-
----
-
-## Client
-
-### GET /client/fingerprints -- Raw Client Fingerprints
-
-```bash
-curl -H "x-api-key: KEY" http://localhost:8084/client/fingerprints
-```
-
-Returns the client resolver's fingerprint data (aliases, people, domains, keywords) for external consumers like Fireflies or n8n.
-
-### GET /client/:clientId -- Client Briefing or Search
-
-```bash
-# Briefing mode: all knowledge categories
-curl -H "x-api-key: KEY" "http://localhost:8084/client/acme-corp?format=compact"
-
-# Search mode: semantic search within client
-curl -H "x-api-key: KEY" \
-  "http://localhost:8084/client/acme-corp?query=tech+stack&category=technical&format=compact"
-```
-
-**Query Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `query` | string | Semantic search within client (omit for full briefing) |
-| `category` | string | Filter by knowledge category |
-| `format` | string | `compact` or `full` |
-
-Accepts fuzzy client names: "AL" resolves to "acme-loans" if configured in fingerprints.
+- `dry_run: false`: updates entity type in the structured store, updates all linked memory vector payloads in chunks of 100, logs reclassification as an event
 
 ---
 
@@ -502,29 +422,6 @@ curl -H "x-api-key: KEY" http://localhost:8084/consolidate/status
 
 ---
 
-## Webhook
-
-### POST /webhook/n8n -- n8n Workflow Ingestion
-
-```bash
-curl -X POST http://localhost:8084/webhook/n8n \
-  -H "x-api-key: KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_name": "seo-rank-update",
-    "workflow_id": "abc123",
-    "execution_id": "exec_456",
-    "status": "success",
-    "message": "Updated 42 keywords",
-    "client_id": "acme-corp",
-    "items_processed": 42
-  }'
-```
-
-**Required fields**: `workflow_name`, `status` (`success` or `error`). If `status=error`, also creates a status update for the workflow.
-
----
-
 ## Reflect
 
 ### POST /reflect -- LLM-Powered Topic Synthesis
@@ -556,36 +453,6 @@ curl -X POST http://localhost:8084/reflect \
 
 ---
 
-## Subscribe (SSE)
-
-### GET /subscribe -- Real-Time Event Stream
-
-```bash
-curl -N -H "x-api-key: KEY" \
-  "http://localhost:8084/subscribe?events=memory:stored,memory:superseded&client_id=acme-corp"
-```
-
-**Query Parameters:**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `events` | string | Comma-separated event types to filter |
-| `client_id` | string | Only receive events for this client |
-
-**Event types**: `memory:stored`, `memory:superseded`, `memory:deleted`, `memory:consolidated`, `entity:created`, `entity:linked`
-
-Returns Server-Sent Events (SSE). Max 50 concurrent subscribers. Sends keepalive comments every 30 seconds.
-
----
-
-## Dashboard
-
-### GET /dashboard -- HTML Dashboard
-
-No authentication. Serves a static HTML page that makes authenticated API calls via JavaScript.
-
----
-
 ## Error Responses
 
 All errors follow this format:
@@ -598,13 +465,11 @@ All errors follow this format:
 |--------|---------|
 | 400 | Invalid input (missing fields, bad types, content too long) |
 | 401 | Missing or invalid API key |
-| 403 | Agent identity mismatch (agent trying to modify another agent's memory) |
 | 404 | Memory or entity not found |
 | 409 | Consolidation already running |
 | 429 | Rate limited (check `Retry-After` header) |
 | 500 | Internal server error |
 | 502 | LLM returned invalid response (reflect endpoint) |
-| 503 | SSE subscriber limit reached |
 
 ## Cross-References
 

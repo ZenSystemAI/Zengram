@@ -13,7 +13,7 @@ superpowers-*
 
 # Internal data — never commit
 backups/
-scripts/
+/scripts/
 docs/superpowers/
 Notebooklm/
 Gemini Images/
@@ -24,3 +24,4 @@ dashboard-*.png
 AGENTS.md
 CLAUDE.md
 BRAIN_SNAPSHOT.md
+plans/

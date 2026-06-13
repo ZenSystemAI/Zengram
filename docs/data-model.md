@@ -35,7 +35,7 @@ The current state of a system, workflow, or process. Statuses should always incl
 
 ## Memory Payload Schema
 
-Every memory stored in Qdrant has this payload structure:
+Every memory stored in pgvector has this payload structure:
 
 ```json
 {
@@ -106,7 +106,7 @@ Deduplication is tenant-scoped and runs at write time (not async). The process:
 
 1. Content is scrubbed of credentials
 2. SHA256 hash is computed and truncated to 16 hex characters
-3. Qdrant is queried for existing points matching `content_hash` + `client_id` + `type` + `active: true`
+3. The vector store is queried for existing points matching `content_hash` + `client_id` + `type` + `active: true`
 4. If a match is found:
    - **Same agent**: Return the existing memory ID (true dedup, no write)
    - **Different agent**: Record cross-agent corroboration by appending to `observed_by` array
@@ -159,7 +159,7 @@ The `at_time` search parameter enables temporal queries: "what was true at time 
 
 When `at_time` is provided, search adds range filters:
 - `valid_from <= at_time`
-- The Qdrant query returns only memories where `valid_from` is before the requested time
+- The vector query returns only memories where `valid_from` is before the requested time
 
 This enables historical queries like "what tech stack did acme use in January?" even after the fact has been superseded.
 
@@ -205,7 +205,7 @@ Final search ranking combines multiple signals:
 
 ### 1. Vector Similarity Score
 
-Cosine similarity from Qdrant (0.0 to 1.0). A minimum threshold of 0.3 filters out irrelevant results.
+Cosine similarity from pgvector (0.0 to 1.0). A minimum threshold of 0.3 filters out irrelevant results.
 
 ### 2. Confidence Decay
 
@@ -247,8 +247,8 @@ The three retrieval paths:
 
 | Path | Source | How It Ranks |
 |------|--------|-------------|
-| Vector | Qdrant cosine similarity | By similarity score |
-| Keyword | Postgres `ts_rank_cd` or SQLite FTS5 `rank` | By BM25 text relevance |
+| Vector | pgvector cosine similarity | By similarity score |
+| Keyword | Postgres `ts_rank_cd` | By BM25 text relevance |
 | Graph | BFS spreading activation through entity graph | By aggregate activation score |
 
 ## Entity Extraction

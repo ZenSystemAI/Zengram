@@ -6,7 +6,7 @@ All configuration is via environment variables, defined in `.env` (loaded by Doc
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `ZENGRAM_API_KEY` | `openssl rand -hex 32` | Admin API key. Required for startup. Full access, no agent identity binding. |
+| `BRAIN_API_KEY` | `openssl rand -hex 32` | Admin API key. Required for startup (the server exits FATAL without it). Full access, no agent identity binding. |
 | `PORT` | `8084` | Express server port. |
 
 ## Server
@@ -29,17 +29,9 @@ Per-agent API keys were retired in v4. A single admin key (`BRAIN_API_KEY`) auth
 
 Consolidation POST is hardcoded to 1 per hour per key (not configurable).
 
-## Qdrant (Vector Store)
+## Vector Store
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `QDRANT_URL` | `http://qdrant:6333` | Qdrant HTTP API URL. Use `http://qdrant:6333` inside Docker, `http://localhost:6334` from host. |
-| `QDRANT_API_KEY` | (none) | Qdrant API key for authentication. Must match `QDRANT__SERVICE__API_KEY` in docker-compose. |
-| `QDRANT_TIMEOUT_MS` | `10000` | Timeout for all Qdrant HTTP requests in ms. Increase to 15000-20000 at 30K+ vectors. |
-
-### Qdrant Performance Notes
-
-At the 39K vector stress test, `QDRANT_TIMEOUT_MS=10000` caused timeout failures on count queries with `exact: true`. The stats endpoint runs 6 parallel count queries which can saturate Qdrant under load. Increase this timeout proactively as your collection grows.
+Vectors live in Postgres via the `pgvector` extension (HNSW index) — there is no separate vector container or service. The structured store and the vector store are the same Postgres database (see `POSTGRES_URL` below). No vector-store-specific environment variables are required.
 
 ## Embedding Provider
 
@@ -52,8 +44,10 @@ At the 39K vector stress test, `QDRANT_TIMEOUT_MS=10000` caused timeout failures
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | (required if provider=openai) | OpenAI API key |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model name |
+| `OPENAI_EMBEDDING_DIMS` | `768` | Output dimensions for the OpenAI embedder |
 
-Uses `text-embedding-3-small` (1536 dimensions).
+Uses `text-embedding-3-small` at 768 dimensions by default.
 
 ### Gemini Embeddings
 
@@ -61,11 +55,11 @@ Uses `text-embedding-3-small` (1536 dimensions).
 |----------|---------|-------------|
 | `GEMINI_API_KEY` | (required if provider=gemini) | Google Gemini API key |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2-preview` | Gemini embedding model name |
-| `GEMINI_EMBEDDING_DIMS` | `3072` | Output dimensions. Supports Matryoshka: 3072, 1536, 768 |
+| `GEMINI_EMBEDDING_DIMS` | `1536` | Output dimensions. Supports Matryoshka: 3072, 1536, 768 (`.env.example` ships `1536`) |
 
 Gemini uses task-specific embeddings: `RETRIEVAL_DOCUMENT` for storage, `RETRIEVAL_QUERY` for search. This improves retrieval quality but means you cannot mix providers between store and search.
 
-**Dimension tradeoffs**: 3072 gives best quality but uses more Qdrant RAM (~12KB per vector). 1536 is a good balance. 768 for minimal footprint.
+**Dimension tradeoffs**: 3072 gives best quality but uses more storage (~12KB per vector). 1536 is a good balance and the `.env.example` default. 768 for minimal footprint.
 
 ### Ollama Embeddings
 
@@ -80,28 +74,16 @@ Dimensions are auto-detected from the model on first embed.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `STRUCTURED_STORE` | `sqlite` | Backend: `sqlite`, `postgres`, `baserow`, `none` |
-
-### SQLite
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SQLITE_PATH` | `./data/brain.db` | SQLite database file path |
-
-SQLite is the default. Supports all features: events, facts, statuses, entities, aliases, relationships, FTS5 keyword search. Good for single-node deployments.
+| `STRUCTURED_STORE` | `postgres` | Backend. Only `postgres` is supported; `initStore()` throws for any other value. |
 
 ### Postgres
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `POSTGRES_URL` | (required if store=postgres) | Connection string: `postgresql://user:pass@host:5432/dbname` |
-| `POSTGRES_PASSWORD` | `brain_secret` | Used by docker-compose for the optional Postgres container |
+| `POSTGRES_URL` | (required) | Connection string: `postgresql://user:pass@host:5432/dbname` |
+| `POSTGRES_PASSWORD` | `brain_secret` | Used by docker-compose for the Postgres container |
 
-Postgres provides full BM25 via `tsvector` with GIN index. Recommended for production or when keyword search quality matters.
-
-### None
-
-Set `STRUCTURED_STORE=none` to run with Qdrant only. Disables: structured queries (`/memory/query`), keyword search, entity store. Vector search still works.
+Postgres holds events, facts, statuses, entities, aliases, and relationships, provides full BM25 via `tsvector` with a GIN index, and (via the `pgvector` extension) stores the embedding vectors. One container backs both the structured store and the vector store.
 
 ## Consolidation Engine
 
@@ -163,6 +145,12 @@ The consolidation cleanup only expires events that meet ALL criteria:
 
 Critical and high-importance events are never auto-expired. Events that have been accessed at least once are never auto-expired.
 
+## Entity Extraction
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENTITY_MIN_CONFIDENCE` | `0.80` | Confidence threshold for confidence-gated NER. Extracted entities below this score are discarded. |
+
 ## Hybrid Retrieval
 
 | Variable | Default | Description |
@@ -174,10 +162,11 @@ Critical and high-importance events are never auto-expired. Events that have bee
 
 Graph BFS search was removed in v4. At the current scale (~500 active memories), vector + BM25 was catching everything the graph path was contributing, and the graph machinery (entity-relationships table, BFS traversal, co-occurrence scoring) added complexity without measurable retrieval lift. The `entities` table and alias cache are still maintained for coreference and stats.
 
-## MCP Server Timeouts
+## MCP Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `BRAIN_API_URL` | `http://localhost:8084` | Base URL the MCP server uses to reach the API. |
 | `BRAIN_MCP_TIMEOUT` | `15000` | Default timeout for MCP-to-API calls in ms |
 | `BRAIN_MCP_CONSOLIDATION_TIMEOUT` | `120000` | Timeout for sync consolidation and reflect calls in ms |
 

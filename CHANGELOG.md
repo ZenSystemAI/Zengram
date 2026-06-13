@@ -2,7 +2,57 @@
 
 This changelog covers the entire Zengram project (API, MCP server, adapters, and tooling).
 
-The canonical source is [`mcp-server/CHANGELOG.md`](mcp-server/CHANGELOG.md) -- this file mirrors it for convenience.
+This root file is the canonical changelog for the project. The `mcp-server/CHANGELOG.md` tracks only the published `@zensystemai/zengram-mcp` package history.
+
+## 4.2.0 (2026-06-12)
+
+Cleanup and hardening release — docs realigned to the v4 surface, retrieval/consolidation bug fixes, security defaults, and dependency/CI hygiene. No breaking API changes.
+
+### Fixed
+- **`at_time` search** no longer drops events/decisions from the vector path — the `valid_from` range filter is now NULL-tolerant, so the vector and keyword paths agree.
+- **Fact/status supersede** is now atomic: the find-deactivate-insert runs in one transaction under a per-key advisory lock, so concurrent writes can't leave two active rows for the same key/subject.
+- **Consolidation** no longer dedupes a merged fact against its own source memories (which silently dropped good merges); sources are excluded from the semantic-dedup check.
+- **Temporal resolver** `today` / `this week|month|year` / `recently` now use an end-of-day upper bound, fixing empty windows when a date-only reference date is supplied.
+
+### Security
+- API key is accepted from the `x-api-key` header only (the query-string `?key=` path was removed — it leaked the key into logs and bypassed the rate limiter).
+- Credentials are scrubbed before embedding on every consolidation write path (merged facts, summaries, contradictions), restoring the documented scrub-before-embed invariant.
+- The server fails fast when `POSTGRES_URL` is unset, and the committed default database credentials were removed from the source fallbacks.
+- The entity-reclassification audit log no longer makes an authenticated self-HTTP call.
+- The bundled entity dictionary ships generic example names only.
+
+### Performance
+- Search access-count updates are now a single atomic SQL increment instead of one read plus N writes (also closes the read-modify-write race).
+
+### Changed
+- `node-cron` upgraded to 4.x, clearing a moderate `uuid` advisory and removing its transitive dependencies.
+- `npm ci` is used for all installs (Docker, CI, publish); the npm publish dedupe guard now checks the correct package name.
+- Added a lenient `checkJs` typecheck (non-blocking in CI) and request-id correlation in error logs.
+
+### Added
+- Unit tests for the temporal resolver.
+- A retrieval-quality evaluation harness skeleton (`api/scripts/eval/`, `docs/eval-harness.md`).
+
+### Docs
+- README, CLAUDE.md, CONTRIBUTING, `docs/*`, and the examples were realigned to the v4 reality: Postgres + pgvector (no Qdrant), 8 routes, 12 MCP tools, Postgres-only structured store (no SQLite/Baserow), and no Python/TypeScript SDK.
+
+## 4.1.0 (unreleased) — v4 Cleanup Sweep
+
+Post-4.0.0 hardening and dead-code removal. No new product surface; the API, MCP tools, and storage model are unchanged from 4.0.0. Both `package.json` files declare `4.1.0`.
+
+### Removed
+- **Dead scripts, backends, and MCP tools.** Finished the v4 sweep: removed remaining legacy scripts, the non-Postgres structured-store backends, and orphaned MCP tool definitions. `STRUCTURED_STORE` now supports `postgres` only (`initStore()` throws otherwise).
+- **Dead exports and shim functions.** Pruned unused exports and compatibility shims left over from the v3 surface.
+
+### Changed
+- **Stopped hiding real failures behind defensive try/catch.** Error handling no longer swallows genuine errors; failures surface instead of being silently downgraded.
+- **DRY extractions.** Factored out shared helpers (`contentHash`, `requirePoint`, `requireEntityStore`, `storeConsolidatedFact`) to remove duplication across routes and services.
+
+### Fixed
+- **Input-validation gaps closed** and duplicated enum literals de-duplicated in the validation middleware.
+
+### Docs
+- Scrubbed migration residue and trimmed narration noise from inline comments.
 
 ## 4.0.0 (2026-04-11) — Shared Brain, Slimmed
 
@@ -26,7 +76,7 @@ Variant A from the v4 redesign assessment. The architectural ideas (hybrid retri
 - **Qdrant → pgvector migration.** The biggest single piece of Variant A, needs a DB backup + deploy window. Not touched tonight. Left Qdrant as the vector store; everything else cuts through without it.
 
 ### Companion change outside this repo
-- **Mission Center**: Removed the Brain Graph tab from `js/views/memory.js` (it embedded the deleted `/graph/full/html` iframe). Fixed a stale `BRAIN_URL` pointer that was pointing at the Beelink (192.168.18.40) instead of G6 (192.168.18.42).
+- **Admin UI**: Removed the Brain Graph tab from `js/views/memory.js` (it embedded the deleted `/graph/full/html` iframe). Fixed a stale `BRAIN_URL` pointer that targeted the wrong host on the local network.
 
 ### Deleted tests
 - `tests/client-resolver.test.js` and `tests/notifications.test.js` (modules they covered no longer exist). 104 unit tests still pass.

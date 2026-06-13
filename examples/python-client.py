@@ -170,7 +170,7 @@ class BrainClient:
         client_id: str | None = None,
     ) -> dict:
         """
-        Structured query against the database backend (SQLite/Postgres/Baserow).
+        Structured query against the Postgres structured store.
 
         Use this for exact lookups like 'get fact with key X' or 'list all statuses'.
 
@@ -206,8 +206,6 @@ class BrainClient:
     def delete(self, memory_id: str, reason: str | None = None) -> dict:
         """
         Soft-delete a memory (marks it inactive).
-
-        Agent-scoped API keys can only delete their own memories.
 
         Args:
             memory_id: The UUID of the memory to delete.
@@ -262,34 +260,7 @@ class BrainClient:
         resp.raise_for_status()
         return resp.json()
 
-    # ----- Client briefing -----
-
-    def client(self, name: str, format: str = "compact", category: str | None = None) -> dict:
-        """
-        Get a comprehensive client briefing — all memories grouped by
-        knowledge_category (brand, strategy, meeting, content, technical,
-        relationship, general).
-
-        Supports fuzzy name resolution: "acme", "Acme Corp", and "acme-corp"
-        all resolve to the same client.
-
-        Args:
-            name:     Client name or slug (fuzzy matched).
-            format:   'compact' (default) or 'full'.
-            category: Filter by knowledge_category.
-
-        Returns:
-            Client briefing dict grouped by category.
-        """
-        params = {"format": format}
-        if category:
-            params["category"] = category
-
-        resp = self.session.get(f"{self.api_url}/client/{name}", params=params)
-        resp.raise_for_status()
-        return resp.json()
-
-    # ----- Export / Import -----
+    # ----- Export -----
 
     def export_memories(
         self,
@@ -317,46 +288,6 @@ class BrainClient:
             params["client_id"] = client_id
 
         resp = self.session.get(f"{self.api_url}/export", params=params)
-        resp.raise_for_status()
-        return resp.json()
-
-    def import_memories(self, memories: list[dict]) -> dict:
-        """
-        Import memories from a previous export.
-
-        Handles deduplication (skips exact hash matches) and batch
-        processes embeddings. Safe for embedding provider migration.
-
-        Args:
-            memories: List of memory dicts (as returned by export_memories).
-
-        Returns:
-            Import result dict with counts (imported, skipped, errors).
-        """
-        resp = self.session.post(
-            f"{self.api_url}/import", json={"memories": memories}
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    # ----- Entity relationship graph -----
-
-    def graph(self, entity: str | None = None, depth: int = 2) -> dict:
-        """
-        Get entity relationship graph data.
-
-        Args:
-            entity: Center graph on a specific entity (optional).
-            depth:  Relationship traversal depth (default 2).
-
-        Returns:
-            Graph data dict with nodes and edges.
-        """
-        params = {"format": "json", "depth": depth}
-        if entity:
-            params["entity"] = entity
-
-        resp = self.session.get(f"{self.api_url}/graph", params=params)
         resp.raise_for_status()
         return resp.json()
 
@@ -476,22 +407,12 @@ if __name__ == "__main__":
     entity = brain.entity("acme-corp")
     pretty("Entity: acme-corp", entity)
 
-    # --- 7. Client briefing ---
-
-    client = brain.client("acme-corp")
-    pretty("Client: acme-corp briefing", client)
-
-    # --- 8. Graph data ---
-
-    graph = brain.graph(entity="acme-corp", depth=2)
-    pretty("Graph: acme-corp relationships", graph)
-
-    # --- 9. Export ---
+    # --- 7. Export ---
 
     export = brain.export_memories(client_id="acme-corp", limit=100)
     pretty("Export: acme-corp memories", {"count": len(export.get("memories", []))})
 
-    # --- 10. Consolidation (async) ---
+    # --- 8. Consolidation (async) ---
 
     job = brain.consolidate(sync=False)
     pretty("Consolidation: triggered", job)
