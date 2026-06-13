@@ -1,7 +1,7 @@
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 RUN mkdir -p /app/data && \

@@ -21,19 +21,19 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install API dependencies
-        run: cd api && npm install
+        run: cd api && npm ci
 
       - name: Run tests
         run: cd api && npm test
 
       - name: Install MCP server dependencies
-        run: cd mcp-server && npm install
+        run: cd mcp-server && npm ci
 
       - name: Publish MCP server
         run: |
           cd mcp-server
           LOCAL_VERSION=$(node -p "require('./package.json').version")
-          PUBLISHED=$(npm view @zensystemai/multi-agent-memory-mcp@$LOCAL_VERSION version 2>/dev/null || echo "")
+          PUBLISHED=$(npm view @zensystemai/zengram-mcp@$LOCAL_VERSION version 2>/dev/null || echo "")
           if [ "$PUBLISHED" = "$LOCAL_VERSION" ]; then
             echo "v$LOCAL_VERSION already published to npm — skipping"
           else

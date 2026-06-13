@@ -21,10 +21,17 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install API dependencies
-        run: cd api && npm install
+        run: cd api && npm ci
 
       - name: Install MCP server dependencies
-        run: cd mcp-server && npm install
+        run: cd mcp-server && npm ci
+
+      # Non-blocking for now: checkJs surfaces a backlog of warnings over the
+      # untyped codebase. Drive the warning count to zero, then drop `|| true`
+      # to make this a real gate.
+      - name: Typecheck (non-blocking)
+        working-directory: api
+        run: npm run typecheck || true
 
       - name: Security audit
         working-directory: api
