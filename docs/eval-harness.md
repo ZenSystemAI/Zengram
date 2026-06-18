@@ -158,7 +158,7 @@ the harness exists so a future change to any of them is a *measured* before/afte
 | `RRF_K` (RRF fusion damping) | `api/src/services/rrf.js:5` | 60 |
 | `SEMANTIC_DEDUP_THRESHOLD` (consolidation merge) | `api/src/services/consolidation.js:14` | 0.92 |
 | similarity floor + `1 - (distance/2)` cosine rescale | `api/src/services/pgvector.js:194`–`197` | 0.3 floor |
-| `IMPORTANCE_WEIGHTS` + access / temporal boost multipliers | `api/src/routes/memory.js:409`–`421` | see code |
+| `IMPORTANCE_WEIGHTS` + access / temporal boost multipliers | `api/src/routes/memory.js:421`–`433` | see code |
 | `NEAR_DUPLICATE_THRESHOLD` (relevance scorer) | `api/src/services/relevance-scorer.js:12` | 0.85 |
 | HNSW `ef_search` | pgvector index/session (untuned) | deferred (PERF-02) |
 

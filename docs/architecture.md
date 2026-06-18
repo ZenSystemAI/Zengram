@@ -12,7 +12,7 @@ graph TB
     end
 
     subgraph MCP["MCP Server (stdio)"]
-        MCP_S[mcp-server/src/index.js<br>12 tools, JSON-RPC over stdio]
+        MCP_S[mcp-server/src/index.js<br>13 tools, JSON-RPC over stdio]
     end
 
     subgraph API["Express API (:8084)"]
@@ -131,7 +131,7 @@ Gemini uses task-specific embeddings: `RETRIEVAL_DOCUMENT` for storage, `RETRIEV
 
 | File | Purpose |
 |------|---------|
-| `index.js` | MCP server with 12 tools, stdio transport, wraps API calls with timeouts |
+| `index.js` | MCP server with 13 tools, stdio transport, wraps API calls with timeouts |
 
 ## Data Flow: Store Path
 

@@ -107,11 +107,9 @@ Deduplication is tenant-scoped and runs at write time (not async). The process:
 1. Content is scrubbed of credentials
 2. SHA256 hash is computed and truncated to 16 hex characters
 3. The vector store is queried for existing points matching `content_hash` + `client_id` + `type` + `active: true`
-4. If a match is found:
-   - **Same agent**: Return the existing memory ID (true dedup, no write)
-   - **Different agent**: Record cross-agent corroboration by appending to `observed_by` array
+4. If a match is found, the existing memory is returned unchanged (`deduplicated: true`) — no second row is written.
 
-The `observed_by` array is capped at `MAX_OBSERVED_BY = 20` to prevent unbounded growth. Once the cap is reached, additional corroboration is acknowledged in the response but not recorded.
+Each memory carries an `observed_by` array and an `observation_count`. In v4 every write is attributed to the canonical `source_agent: "claude-code"`, so `observed_by` is always `["claude-code"]` and the cross-agent corroboration path no longer fires (the dedup check returns the existing row without mutating it). The field and the `MAX_OBSERVED_BY = 20` cap remain in the schema for historical data and any future multi-writer setup.
 
 ### Consolidation Dedup
 
@@ -235,7 +233,7 @@ Results are sorted by `effective_score` descending. In compact format, scores ar
 
 ### 5. RRF Fusion (Multi-Path)
 
-When multi-path retrieval is active (default), results from vector, keyword, and graph searches are merged using Reciprocal Rank Fusion before confidence decay and access boost are applied.
+When multi-path retrieval is active (default), results from the vector and keyword searches are merged using Reciprocal Rank Fusion before confidence decay and access boost are applied.
 
 **RRF Formula**: `rrf_score(d) = sum(1 / (k + rank))` across all ranked lists where `d` appears.
 
@@ -243,13 +241,12 @@ When multi-path retrieval is active (default), results from vector, keyword, and
 - Items appearing in multiple lists (e.g., found by both vector and keyword search) get boosted.
 - Items missing from a list simply don't contribute score from that list (no penalty).
 
-The three retrieval paths:
+The two retrieval paths:
 
 | Path | Source | How It Ranks |
 |------|--------|-------------|
 | Vector | pgvector cosine similarity | By similarity score |
 | Keyword | Postgres `ts_rank_cd` | By BM25 text relevance |
-| Graph | BFS spreading activation through entity graph | By aggregate activation score |
 
 ## Entity Extraction
 
@@ -327,22 +324,11 @@ Entities can have typed relationships:
 | `competitor_of` | Competitive relationship | "acme -> rival-corp" |
 | `co_occurrence` | Appear together in memories (auto-generated) | any pair |
 
-Relationships have a `strength` counter that increments each time the relationship is created/observed. The graph search uses `strength` to weight BFS traversal: `strengthFactor = min(strength / 5, 1.0)`.
+Relationships have a `strength` counter that increments each time the relationship is created/observed (`co_occurrence` pairs are generated automatically when entities appear together in a memory). The counter is exposed through the entity endpoints and used for stats; it no longer feeds a graph-search retrieval path (see below).
 
-### Graph Search (BFS Spreading Activation)
+### Graph search (retired in v4)
 
-The graph search traverses entity relationships starting from entities mentioned in the query:
-
-1. Extract entities from query text (fast-path regex)
-2. Resolve to entity IDs in the store
-3. BFS with activation decay:
-   - Seed entities start with activation 1.0
-   - Each hop decays by `GRAPH_SEARCH_DECAY` (default 0.8)
-   - Typed relationships (uses, works_on, etc.) get `CAUSAL_BOOST` (default 2.0x)
-   - `co_occurrence` relationships get no boost
-   - Stop at `MAX_DEPTH` (default 2) or when activation < 0.1
-4. Collect all memory IDs linked to activated entities
-5. Sum activation scores per memory (memories linked to multiple activated entities score higher)
+Earlier versions ran a third retrieval path — BFS spreading activation across the entity graph — fused alongside vector and keyword search. It was removed in v4: at the current corpus scale, vector + BM25 already surfaced everything the graph path contributed, and the traversal added complexity without a measurable retrieval lift. The `entity_relationships` table and its `strength` counter are still populated at write time and exposed through the entity endpoints, but they no longer drive search.
 
 ## Consolidation Pipeline
 

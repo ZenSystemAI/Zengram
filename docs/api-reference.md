@@ -88,27 +88,16 @@ curl -X POST http://localhost:8084/memory \
 
 **Response (200 -- Deduplicated):**
 
+Storing content that already exists (same `content_hash`, `client_id`, and `type`) returns the existing memory unchanged — no second row is written.
+
 ```json
 {
   "id": "existing-uuid",
   "type": "fact",
   "content_hash": "abc123def456",
   "deduplicated": true,
-  "observed_by": ["claude-code"],
-  "observation_count": 1,
-  "message": "Exact duplicate from same agent -- returning existing memory"
-}
-```
-
-**Response (200 -- Corroborated):**
-
-```json
-{
-  "id": "existing-uuid",
-  "corroborated": true,
-  "observed_by": ["claude-code", "n8n"],
-  "observation_count": 2,
-  "message": "Cross-agent corroboration recorded -- now observed by 2 agents"
+  "message": "Exact duplicate — returning existing memory",
+  "stored_in": { "vector": true, "structured_db": true }
 }
 ```
 

@@ -13,13 +13,13 @@
     <a href="docs/configuration.md">Config</a>
   </p>
   <p align="center">
-    <a href="https://github.com/ZenSystemAI/zengram/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZenSystemAI/zengram/actions/workflows/ci.yml/badge.svg" /></a>
+    <a href="https://github.com/ZenSystemAI/Zengram/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ZenSystemAI/Zengram/actions/workflows/ci.yml/badge.svg" /></a>
     <a href="https://www.npmjs.com/package/@zensystemai/zengram-mcp"><img alt="npm" src="https://img.shields.io/npm/v/@zensystemai/zengram-mcp.svg" /></a>
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" />
     <img alt="Node 20+" src="https://img.shields.io/badge/node-20%2B-green.svg" />
     <img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue.svg" />
     <img alt="MCP" src="https://img.shields.io/badge/MCP-compatible-purple.svg" />
-    <a href="https://github.com/ZenSystemAI/zengram/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ZenSystemAI/zengram?style=social" /></a>
+    <a href="https://github.com/ZenSystemAI/Zengram/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ZenSystemAI/Zengram?style=social" /></a>
   </p>
 </p>
 
@@ -27,7 +27,7 @@
   <img src=".github/hero.jpg" alt="Zengram — shared memory for multi-agent AI systems" width="700" />
 </p>
 
-Store a fact from Claude Code on your laptop, recall it from an autonomous agent on your server, get a briefing from n8n — all through the same memory system. Born from a production setup where nothing existed that let multiple AI agents share memory across separate machines.
+Store a fact from Claude Code on your laptop, recall it from an autonomous agent on your server, get a briefing from another session — all through the same memory system. Born from a production setup where nothing existed that let multiple AI agents share memory across separate machines.
 
 ---
 
@@ -37,7 +37,7 @@ Store a fact from Claude Code on your laptop, recall it from an autonomous agent
   <img src=".github/shared memory.jpg" alt="Before and after shared memory" width="600" />
 </p>
 
-You run multiple AI agents — Claude Code for development, autonomous agents for tasks, n8n for automation. They each maintain their own context and forget everything between sessions. When one agent discovers something important, the others never learn about it.
+You run multiple AI agents — Claude Code for development, autonomous agents for tasks. They each maintain their own context and forget everything between sessions. When one agent discovers something important, the others never learn about it.
 
 ## How It Works
 
@@ -98,7 +98,6 @@ The benchmark uses **cosine similarity only** — none of the API's multi-path f
 | Cross-machine by design | **Yes** | Cloud only | No | Cloud only | No |
 | Typed memory (event/fact/status/decision) | **Yes** | No | No | No | No |
 | Multi-path search (vector+BM25) | **Yes** | Vector only | Vector only | Hybrid | **Yes** |
-| Cross-agent corroboration | **Yes** | No | No | No | No |
 | Session briefings | **Yes** | No | No | No | No |
 | Credential scrubbing | **Yes** | No | No | No | No |
 | Entity extraction + linking | **Yes** | Graph (Pro) | No | **Yes** | No |
@@ -110,8 +109,8 @@ The benchmark uses **cosine similarity only** — none of the API's multi-path f
 ## Quick Start
 
 ```bash
-git clone https://github.com/ZenSystemAI/zengram.git
-cd zengram
+git clone https://github.com/ZenSystemAI/Zengram.git
+cd Zengram
 
 cp .env.example .env
 # Edit .env — set BRAIN_API_KEY and your embedding provider key
@@ -176,7 +175,7 @@ Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to y
 | [MCP Tools](docs/mcp-tools.md) | The 13 MCP tools agents use |
 | [Operations](docs/operations.md) | Deployment, monitoring, failure modes |
 | [Benchmarks](docs/benchmarks.md) | Full LongMemEval methodology and results |
-| [Examples](examples/) | curl demo, Python client, multi-agent scenario |
+| [Examples](examples/) | curl demo, Python client |
 
 ## Roadmap
 
@@ -190,7 +189,7 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## See Also
 
-- **[OpenClaw Memory Toolkit](https://github.com/ZenSystemAI/openclaw-memory)** — Long-term memory for OpenClaw agents, with an optional bridge back to Zengram.
+- **[OpenClaw Memory Toolkit](https://github.com/ZenSystemAI/openclaw-memory)** — Long-term memory for OpenClaw agents.
 
 ## License
 

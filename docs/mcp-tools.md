@@ -1,8 +1,8 @@
 # MCP Tool Reference
 
-The Shared Brain MCP server exposes 12 tools via the Model Context Protocol (stdio transport). Agents like Claude Code interact with the memory system exclusively through these tools.
+The Shared Brain MCP server exposes 13 tools via the Model Context Protocol (stdio transport). Agents like Claude Code interact with the memory system exclusively through these tools.
 
-Server: `zengram` v4.1.0
+Server: `zengram` v4.3.0
 
 ## Configuration
 

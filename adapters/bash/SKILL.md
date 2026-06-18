@@ -12,7 +12,7 @@ Command-line interface for the Zengram system. Use this to store, search, and re
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAIN_API_URL` | `http://localhost:8084` | API server URL |
-| `BRAIN_AGENT_NAME` | `my-agent` | Your agent's identifier |
+| `BRAIN_AGENT_NAME` | `my-agent` | Self-exclusion filter for `briefing` only. NOT persisted: v4 attributes every write to the canonical `source_agent: "claude-code"` server-side. |
 | `BRAIN_API_KEY` | *(required)* | API key for authentication |
 | `BRAIN_ENV_FILE` | `$HOME/.config/zengram/.env` | Path to env file |
 
@@ -52,7 +52,7 @@ Command-line interface for the Zengram system. Use this to store, search, and re
 - `--source_agent`: Filter by agent name
 - `--client_id`: Filter by client slug
 - `--category`: Filter by `semantic` | `episodic` | `procedural`
-- `--limit`: Max results 1–20 (default: 10)
+- `--limit`: Max results 1–100 (default: 10)
 
 ### Session briefing
 ```bash

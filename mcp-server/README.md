@@ -1,15 +1,15 @@
 # @zensystemai/zengram-mcp
 
-MCP server for [Zengram](https://github.com/ZenSystemAI/zengram) — gives Claude Code, Cursor, and other MCP-compatible AI tools access to a shared memory system that works across agents and machines.
+MCP server for [Zengram](https://github.com/ZenSystemAI/Zengram) — gives Claude Code, Cursor, and other MCP-compatible AI tools access to a shared memory system that works across agents and machines.
 
 ## Prerequisites
 
 This package connects to the Zengram API. You need to run that first:
 
 ```bash
-git clone https://github.com/ZenSystemAI/zengram.git
-cd zengram
-cp .env.example .env  # Set BRAIN_API_KEY, QDRANT_URL, QDRANT_API_KEY
+git clone https://github.com/ZenSystemAI/Zengram.git
+cd Zengram
+cp .env.example .env  # Set BRAIN_API_KEY, GEMINI_API_KEY, POSTGRES_URL (and POSTGRES_PASSWORD)
 docker compose up -d
 ```
 
@@ -65,12 +65,18 @@ npm install -g @zensystemai/zengram-mcp
 | Tool | Description |
 |------|-------------|
 | `brain_store` | Store a memory (event, fact, decision, or status). Entities are automatically extracted. |
-| `brain_search` | Semantic search across all memories. Supports `entity` filter for entity-scoped results. |
-| `brain_briefing` | Session briefing — what happened since a given time, with entity summary. |
+| `brain_search` | Multi-path search (vector + BM25, fused with RRF) across all memories. |
+| `brain_briefing` | Session briefing — what happened since a given time. |
 | `brain_query` | Structured query by type, key, subject, or time range. |
-| `brain_stats` | Memory + entity health stats (totals, active, decayed, by type, top entities). |
+| `brain_stats` | Memory health stats (totals, active, decayed/superseded, by type). |
 | `brain_consolidate` | Trigger or check LLM consolidation (also extracts and normalizes entities). |
 | `brain_entities` | Query the entity graph — list, get details, find linked memories, stats. |
+| `brain_update` | Update a memory in place (content, importance, knowledge_category, metadata) by `memory_id`. |
+| `brain_delete` | Soft-delete a memory by `memory_id`. |
+| `brain_export` | Export matching memories as JSON. |
+| `brain_import` | Operator-approved bulk import of memories. |
+| `brain_reflect` | On-demand LLM synthesis (patterns, timeline, contradictions, gaps) on a topic. |
+| `brain_research` | Agentic iterate-until-sufficient retrieval + grounded synthesis on a topic (server-side opt-in via `RESEARCH_ENABLED`). |
 
 ## Usage Examples
 
@@ -90,13 +96,13 @@ brain_store type="fact" content="Client prefers dark mode UI" source_agent="clau
 
 Stores a fact that any other agent can retrieve. Entities like "acme-corp" (client) are automatically extracted and linked.
 
-### Search with entity filter
+### Search memories
 
 ```
-brain_search query="deployment issues" entity="Docker"
+brain_search query="deployment issues" limit=5
 ```
 
-Semantic search filtered to only memories that mention Docker. Uses Qdrant's native payload index — no result-count ceiling.
+Multi-path search (vector similarity + BM25 keyword, fused with RRF) across all memories. To scope results to a single entity, use `brain_entities action="memories"` (below).
 
 ### Query entities
 
@@ -179,14 +185,14 @@ The consolidation engine refines types and discovers aliases over time.
 | `API ... 401 Unauthorized` | API key doesn't match the one in your Memory API `.env` |
 | `API ... ECONNREFUSED` | Memory API isn't running — run `docker compose up -d` |
 | `fetch failed` / timeout | Check `BRAIN_API_URL` points to the correct host and port |
-| Tool calls return empty results | Verify Qdrant is running and has data — use `brain_stats` to check |
-| `Qdrant request timed out` | Qdrant is slow or unreachable — check connectivity, increase `QDRANT_TIMEOUT_MS` |
-| `brain_entities` returns empty | Entity graph requires SQLite or Postgres backend (not Baserow) |
+| Tool calls return empty results | Verify the API and its Postgres container are running and have data — use `brain_stats` to check |
+| `API request timed out` | The API or Postgres is slow or unreachable — check connectivity and the `BRAIN_MCP_TIMEOUT` setting |
+| `brain_entities` returns empty | The entity store requires the Postgres structured backend (`STRUCTURED_STORE=postgres`) and extracted entities to exist |
 | `name is required for get/memories` | Provide `name` parameter when using `action="get"` or `action="memories"` |
 
 ## Full Documentation
 
-See the [main repository](https://github.com/ZenSystemAI/zengram) for the complete API reference, adapter docs (Bash CLI, n8n, OpenClaw), deployment guide, and architecture overview.
+See the [main repository](https://github.com/ZenSystemAI/Zengram) for the complete API reference, adapter docs (Bash CLI, Claude Code session-end skill), deployment guide, and architecture overview.
 
 ## License
 
