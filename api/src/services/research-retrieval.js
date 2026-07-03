@@ -34,7 +34,7 @@ export function formatMemoriesXml(memories) {
  * Multi-path retrieve + fuse for a single query.
  *
  * Behaviour is identical to the block previously inlined in routes/reflect.js:
- *  - vector (embed→searchPoints) and keyword (BM25) run in parallel
+ *  - vector (embed→searchPoints) and keyword (full-text) run in parallel
  *  - results fuse via Reciprocal Rank Fusion, with getPoints backfilling
  *    keyword-only hits that have no vector payload
  *  - if the vector path fails AND keyword returned nothing, retry keyword with

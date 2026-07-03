@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { scrollPoints, getCollectionInfo, computeEffectiveConfidence } from '../services/pgvector.js';
+import { isInvalidIsoTimestampParam } from '../services/request-utils.js';
 import { logError } from '../lib/log.js';
 
 export const briefingRouter = Router();
@@ -20,6 +21,12 @@ briefingRouter.get('/', async (req, res) => {
       return res.status(400).json({
         error: 'Missing required parameter: since (ISO 8601 timestamp)',
         example: '/briefing?since=2026-03-09T00:00:00Z&agent=claude-code&format=compact',
+      });
+    }
+    if (isInvalidIsoTimestampParam(since)) {
+      return res.status(400).json({
+        error: 'Invalid since parameter — must be an ISO 8601 timestamp',
+        example: '/briefing?since=2026-03-09T00:00:00Z',
       });
     }
 

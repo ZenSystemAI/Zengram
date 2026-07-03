@@ -4,7 +4,7 @@ import { embed } from '../services/embedders/interface.js';
 import {
   upsertPoint, searchPoints, updatePointPayload,
   findByPayload, computeEffectiveConfidence, getPoint, getPoints,
-  supersedeAndInsert, bumpAccessCounts,
+  supersedeAndInsert, bumpAccessCounts, recordCorroboration,
 } from '../services/pgvector.js';
 import {
   createEvent, upsertFact, upsertStatus, listEvents, listFacts, listStatuses, isStoreAvailable,
@@ -15,6 +15,7 @@ import { extractEntities, linkExtractedEntities } from '../services/entities.js'
 import { validateMemoryInput, validateContent, validateImportance, validateMetadata, VALID_KNOWLEDGE_CATEGORIES } from '../middleware/validate.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
 import { reciprocalRankFusion } from '../services/rrf.js';
+import { effectiveScore, extractSessionId, diversifyBySession } from '../services/ranking.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
 import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
@@ -23,9 +24,9 @@ import { logError } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 
-// Canonical identity — every write is attributed to "claude-code" regardless
-// of what source_agent the caller sends.
-const CANONICAL_AGENT = 'claude-code';
+// Cap on the observed_by corroboration list — enough to record broad
+// cross-agent agreement without letting the payload grow unbounded.
+const MAX_OBSERVED_BY = 20;
 
 // Shared 404-or-point helper for routes that operate on an existing memory.
 // Returns the point on success, null after sending the 404.
@@ -53,25 +54,38 @@ memoryRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: validationError });
     }
 
-    source_agent = CANONICAL_AGENT;
+    // source_agent is caller-provided and validated (AGENT_NAME_REGEX) — each
+    // agent writes under its own identity so briefings, filters, and
+    // cross-agent corroboration work as documented.
     if (!client_id) client_id = 'global';
 
     const cleanContent = scrubCredentials(content);
     const contentHash = hashContent(cleanContent);
 
     // --- Deduplication check ---
-    // With canonical-identity coercion, every new write has the same
-    // source_agent, so cross-agent corroboration cannot fire. Duplicate hit
-    // returns the existing memory unchanged.
+    // Same agent re-storing identical content returns the existing memory.
+    // A DIFFERENT agent storing identical content is cross-agent corroboration:
+    // record the observation instead of dropping it.
     const duplicates = await findByPayload('content_hash', contentHash, { active: true, client_id: client_id || 'global', type });
     if (duplicates.length > 0) {
       const existing = duplicates[0];
+      // Atomic conditional UPDATE — concurrent corroborations from different
+      // agents can't overwrite each other (returns corroborated=false when
+      // this agent is already recorded or the observed_by cap is reached).
+      let corroboration = { corroborated: false, observedCount: null };
+      try {
+        corroboration = await recordCorroboration(existing.id, source_agent, MAX_OBSERVED_BY);
+      } catch (e) {
+        console.error('[memory:corroborate] Failed to record corroboration:', e.message);
+      }
       return res.status(200).json({
         id: existing.id,
         type: existing.payload.type,
         content_hash: contentHash,
         deduplicated: true,
-        message: 'Exact duplicate — returning existing memory',
+        ...(corroboration.corroborated
+          ? { corroborated: true, observed_by_count: corroboration.observedCount, message: 'Duplicate content from a different agent — recorded as corroboration' }
+          : { message: 'Exact duplicate — returning existing memory' }),
         stored_in: { vector: true, structured_db: true },
       });
     }
@@ -97,10 +111,10 @@ memoryRouter.post('/', async (req, res) => {
     const isKeyedFact = type === 'fact' && req.body.key;
     const isKeyedStatus = type === 'status' && req.body.subject;
     if (isKeyedFact) {
-      const matches = await findByPayload('key', req.body.key, { active: true, type: 'fact' }, 1);
+      const matches = await findByPayload('key', req.body.key, { active: true, type: 'fact', client_id: client_id || 'global' }, 1);
       if (matches.length > 0) supersedesId = matches[0].id;
     } else if (isKeyedStatus) {
-      const matches = await findByPayload('subject', req.body.subject, { active: true, type: 'status' }, 1);
+      const matches = await findByPayload('subject', req.body.subject, { active: true, type: 'status', client_id: client_id || 'global' }, 1);
       if (matches.length > 0) supersedesId = matches[0].id;
     }
 
@@ -272,7 +286,7 @@ memoryRouter.post('/', async (req, res) => {
 });
 
 // GET /memory/search — Multi-path retrieval with RRF fusion
-// Paths: vector (semantic) + keyword (BM25). Graph BFS path retired in v4.
+// Paths: vector (semantic) + keyword (Postgres full-text). Graph BFS path retired in v4.
 memoryRouter.get('/search', async (req, res) => {
   try {
     const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc, read_only, track_access } = req.query;
@@ -337,7 +351,10 @@ memoryRouter.get('/search', async (req, res) => {
 
     // --- Multi-path retrieval ---
     const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is vector-store-only
-    const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 50) : maxResults;
+    // Fetch deeper than the response limit so fusion + post-filters have real
+    // candidates to work with. The old hard cap of 50 silently truncated
+    // limit>25 multipath queries.
+    const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 200) : maxResults;
 
     // Always run vector search (use expanded query for better coverage)
     const vectorPromise = embed(searchQuery, 'search').then(vector =>
@@ -356,89 +373,120 @@ memoryRouter.get('/search', async (req, res) => {
       vectorPromise, keywordPromise,
     ]);
 
-    // --- Build result set ---
-    let finalResults;
+    // --- Build candidate set ---
+    // Candidates carry their retrieval provenance: simScore (null when found
+    // by keyword only — no fabricated similarity) and rrfScore so the final
+    // ranking can blend fusion with similarity instead of discarding it.
+    let candidates;
+    let maxRrfScore = null;
     const retrievalSources = {};
 
     if (useMultiPath && keywordResults.length > 0) {
       // Build ranked lists for RRF (vector + keyword)
       const rankedLists = [
         vectorResults.map(r => ({ id: r.id, source: 'vector' })),
+        keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })),
       ];
-      if (keywordResults.length > 0) {
-        rankedLists.push(keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })));
-      }
 
       const fused = reciprocalRankFusion(rankedLists);
-      const topFused = fused.slice(0, maxResults);
-
-      // Track which sources contributed to each result
-      for (const f of topFused) {
-        retrievalSources[f.id] = f.sources;
-      }
+      maxRrfScore = fused.length > 0 ? fused[0].rrf_score : null; // fused is sorted desc
 
       // Build payload map from vector results (already have full payloads)
       const payloadMap = new Map();
       for (const r of vectorResults) {
-        payloadMap.set(r.id, { id: r.id, score: r.score, payload: r.payload });
+        payloadMap.set(r.id, { simScore: r.score, payload: r.payload });
       }
 
-      // Fetch payloads for keyword hits not in vector results
-      const missingIds = topFused.map(f => f.id).filter(id => !payloadMap.has(id));
+      // Batch-fetch payloads for keyword-only hits (kept for post-filtering +
+      // ranking — trimming to maxResults happens after both)
+      const missingIds = fused.map(f => f.id).filter(id => !payloadMap.has(id));
       if (missingIds.length > 0) {
         try {
           const fetched = await getPoints(missingIds);
           for (const pt of fetched) {
-            payloadMap.set(pt.id, { id: pt.id, score: 0, payload: pt.payload });
+            payloadMap.set(pt.id, { simScore: null, payload: pt.payload });
           }
         } catch (e) {
           console.error('[memory:search] Batch fetch failed:', e.message);
         }
       }
 
-      // Assemble results in RRF order
-      finalResults = topFused
-        .map(f => payloadMap.get(f.id))
-        .filter(Boolean);
+      candidates = fused.map(f => {
+        const entry = payloadMap.get(f.id);
+        if (!entry) return null;
+        retrievalSources[f.id] = f.sources;
+        return { id: f.id, simScore: entry.simScore, payload: entry.payload, rrfScore: f.rrf_score };
+      }).filter(Boolean);
     } else {
       // Single-path: vector only
-      finalResults = vectorResults.slice(0, maxResults);
+      candidates = vectorResults.map(r => ({ id: r.id, simScore: r.score, payload: r.payload, rrfScore: null }));
     }
 
-    // Post-filter for temporal validity (at_time) — applies to ALL search paths
-    // Vector search already filters via pgvector range query, but keyword results bypass it
-    if (at_time) {
-      finalResults = finalResults.filter(r => {
-        const p = r.payload;
+    // --- Post-fusion filter parity ---
+    // The keyword path only filters client_id/type/source_agent/active in SQL,
+    // so keyword-sourced candidates must be re-checked against the remaining
+    // filters the vector path already applied. Runs BEFORE the maxResults trim
+    // so filtered-out rows don't leave the response short.
+    const parseTime = (v) => {
+      const t = Date.parse(v);
+      return Number.isNaN(t) ? null : t;
+    };
+    const dateFromMs = effectiveDateFrom ? parseTime(effectiveDateFrom) : null;
+    const dateToMs = effectiveDateTo ? parseTime(effectiveDateTo) : null;
+    candidates = candidates.filter(({ payload: p }) => {
+      if (include_superseded !== 'true' && p.active === false) return false;
+      if (category && p.category !== category) return false;
+      if (kc && p.knowledge_category !== kc) return false;
+      if (source_agent && p.source_agent !== source_agent) return false;
+      const createdMs = p.created_at ? parseTime(p.created_at) : null;
+      if (dateFromMs !== null && createdMs !== null && createdMs < dateFromMs) return false;
+      if (dateToMs !== null && createdMs !== null && createdMs > dateToMs) return false;
+      // Temporal validity (at_time) — keyword results bypass the vector path's range filter
+      if (at_time) {
         if (p.valid_from && p.valid_from > at_time) return false; // not yet valid
         if (p.valid_to && p.valid_to <= at_time) return false;    // already expired
-        return true;
-      });
-    }
+      }
+      return true;
+    });
 
-    // Apply confidence decay + access-weighted ranking + temporal boost + importance weighting
-    const COMPACT_MAX = 200;
-    const IMPORTANCE_WEIGHTS = { critical: 1.0, high: 0.85, medium: 0.7, low: 0.5 };
+    // --- Ranking ---
+    // Blend fusion + similarity, multiply confidence decay / capped access
+    // boost / temporal proximity / importance (services/ranking.js).
     const refDateForBoost = reference_date || at_time || null;
-    const results = finalResults.map(r => {
-      const effectiveConfidence = computeEffectiveConfidence(r.payload);
-      const p = r.payload;
-      const accessBoost = 1 + (0.3 * Math.log2((p.access_count || 0) + 1));
-      // Temporal proximity boost — memories closer to reference date score higher
-      const tempBoost = (temporalResult.isTemporalQuery && refDateForBoost)
+    for (const c of candidates) {
+      const p = c.payload;
+      c.effectiveConfidence = computeEffectiveConfidence(p);
+      const temporalBoost = (temporalResult.isTemporalQuery && refDateForBoost)
         ? temporalProximityBoost(p.created_at, refDateForBoost)
         : 1.0;
-      // Importance weighting — critical memories rank higher than low-importance ones
-      const importanceWeight = IMPORTANCE_WEIGHTS[p.importance] || 0.7;
-      const effectiveScore = +(((r.score || 0.5) * effectiveConfidence * accessBoost * tempBoost * importanceWeight)).toFixed(4);
+      c.effective_score = effectiveScore({
+        simScore: c.simScore,
+        rrfScore: c.rrfScore,
+        maxRrfScore,
+        effectiveConfidence: c.effectiveConfidence,
+        accessCount: p.access_count,
+        temporalBoost,
+        importance: p.importance,
+      });
+    }
+    candidates.sort((a, b) => b.effective_score - a.effective_score);
+
+    // Session-diversity round-robin (untagged results compete at rank 0), then trim
+    const diversified = diversifyBySession(candidates, c => extractSessionId(c.payload));
+    const top = diversified.slice(0, maxResults);
+
+    // --- Format ---
+    const COMPACT_MAX = 200;
+    const results = top.map(c => {
+      const p = c.payload;
 
       // Index format — minimal tokens, IDs + one-line summary for progressive disclosure
       if (isIndex) {
         const text = p.text_compressed || p.text || '';
         const firstLine = text.split('\n').find(l => l.trim()) || text;
         return {
-          id: r.id,
-          effective_score: effectiveScore,
+          id: c.id,
+          effective_score: c.effective_score,
           type: p.type,
           summary: firstLine.slice(0, 80),
           importance: p.importance,
@@ -450,9 +498,9 @@ memoryRouter.get('/search', async (req, res) => {
       if (isCompact) {
         const text = p.text_compressed || p.text || '';
         return {
-          id: r.id,
-          score: +(r.score || 0).toFixed(4),
-          effective_score: effectiveScore,
+          id: c.id,
+          score: +(c.simScore ?? 0).toFixed(4),
+          effective_score: c.effective_score,
           type: p.type,
           content: text.length > COMPACT_MAX ? text.slice(0, COMPACT_MAX) + '...' : text,
           source_agent: p.source_agent,
@@ -463,62 +511,24 @@ memoryRouter.get('/search', async (req, res) => {
       }
 
       const base = {
-        id: r.id,
-        score: r.score || 0,
-        confidence: effectiveConfidence,
-        effective_score: effectiveScore,
+        id: c.id,
+        score: c.simScore ?? 0,
+        confidence: c.effectiveConfidence,
+        effective_score: c.effective_score,
         ...p,
       };
 
       // In full format, show which retrieval paths contributed
-      if (isFull && retrievalSources[r.id]) {
-        base.retrieval_sources = retrievalSources[r.id];
+      if (isFull && retrievalSources[c.id]) {
+        base.retrieval_sources = retrievalSources[c.id];
       }
 
       return base;
     });
 
-    results.sort((a, b) => b.effective_score - a.effective_score);
-
-    // --- Session deduplication in re-ranking ---
-    // Ensure results span unique sessions rather than clustering around the most similar one.
-    // Parse session_id from metadata or content header.
-    if (results.length > 3) {
-      const diversified = [];
-      const sessionSeen = new Map(); // session_id → count
-      const noSession = [];
-
-      for (const r of results) {
-        // Try metadata.session_id, then parse from content header "[Session: xxx |"
-        let sessionId = r.metadata?.session_id;
-        if (!sessionId) {
-          const text = r.text || r.content || '';
-          const match = text.match(/\[Session:\s*(\S+)/);
-          if (match) sessionId = match[1];
-        }
-        if (!sessionId) { noSession.push(r); continue; }
-
-        const count = sessionSeen.get(sessionId) || 0;
-        sessionSeen.set(sessionId, count + 1);
-        // Tag with session info for round-robin
-        r._sessionId = sessionId;
-        r._sessionRank = count;
-        diversified.push(r);
-      }
-
-      // Round-robin: sort by session rank (0 first from all sessions, then 1, etc.), preserving score within rank
-      diversified.sort((a, b) => a._sessionRank - b._sessionRank || b.effective_score - a.effective_score);
-
-      // Merge back: diversified first, then non-session results
-      results.length = 0;
-      results.push(...diversified, ...noSession);
-      // Trim to maxResults
-      results.splice(maxResults);
-    }
-
     // Bump access_count + last_accessed_at for the returned results in one atomic
     // SQL statement (fire-and-forget — must not delay the search response).
-    const pointIds = results.map(r => r.id);
+    const pointIds = top.map(c => c.id);
     if (trackAccess && pointIds.length > 0) {
       bumpAccessCounts(pointIds, new Date().toISOString())
         .catch(e => console.error('[memory:search] Access count update failed:', e.message));
@@ -531,14 +541,20 @@ memoryRouter.get('/search', async (req, res) => {
         const retryVector = await embed(broader, 'search');
         const retryResults = await searchPoints(retryVector, filter, maxResults, nestedFilters, rangeFilters);
         if (retryResults.length > 0) {
-          for (const r of retryResults) {
-            const ec = computeEffectiveConfidence(r.payload);
-            const ab = 1 + (0.3 * Math.log2((r.payload.access_count || 0) + 1));
-            r._retryScore = +((r.score * ec * ab)).toFixed(4);
-          }
-          retryResults.sort((a, b) => b._retryScore - a._retryScore);
-          const retryFormatted = retryResults.slice(0, maxResults).map(r => ({
-            id: r.id, score: r.score, effective_score: r._retryScore, ...r.payload,
+          const retryScored = retryResults.map(r => ({
+            result: r,
+            effective_score: effectiveScore({
+              simScore: r.score,
+              rrfScore: null,
+              maxRrfScore: null,
+              effectiveConfidence: computeEffectiveConfidence(r.payload),
+              accessCount: r.payload.access_count,
+              importance: r.payload.importance,
+            }),
+          }));
+          retryScored.sort((a, b) => b.effective_score - a.effective_score);
+          const retryFormatted = retryScored.slice(0, maxResults).map(({ result: r, effective_score }) => ({
+            id: r.id, score: r.score, effective_score, ...r.payload,
           }));
           return res.json({
             query: q, expanded_query: broader, count: retryFormatted.length, results: retryFormatted,

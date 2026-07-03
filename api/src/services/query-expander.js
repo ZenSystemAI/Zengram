@@ -3,7 +3,7 @@
 // "recommend a show" doesn't embedding-match memories about a specific stand-up
 // special or Netflix series.
 
-// Preference indicator words — used for BM25 preference path
+// Preference indicator words — used for keyword preference path
 const PREFERENCE_INDICATORS = [
   'prefer', 'preference', 'favorite', 'favourite', 'like', 'love', 'enjoy',
   'hate', 'dislike', 'want', 'wish', 'choose', 'chosen', 'always', 'never',

@@ -1,6 +1,8 @@
-// BM25 keyword search service (Postgres tsvector + GIN + ts_rank_cd).
-// Provides the keyword retrieval path that runs alongside vector search;
-// results are fused via RRF at the route layer.
+// Keyword search service (Postgres tsvector + GIN + ts_rank_cd).
+// Note: ts_rank_cd is cover-density ranking, not true BM25 (no IDF or term
+// saturation) — good enough as the lexical leg of RRF fusion, but don't
+// oversell it. Provides the keyword retrieval path that runs alongside
+// vector search; results are fused via RRF at the route layer.
 
 let store = null;
 
@@ -43,12 +45,14 @@ export async function keywordSearch(queryText, filters = {}, limit = 20) {
   if (!isKeywordSearchAvailable()) return [];
   if (!queryText || queryText.trim().length === 0) return [];
 
-  // plainto_tsquery handles natural language — no special syntax needed.
+  // websearch_to_tsquery handles natural language like plainto_tsquery but
+  // also supports quoted phrases ("exact phrase") and negation (-term), and
+  // never throws on unbalanced syntax.
   let sql = `
     SELECT memory_id,
-           ts_rank_cd(content_tsv, plainto_tsquery('english', $1)) AS rank
+           ts_rank_cd(content_tsv, websearch_to_tsquery('english', $1)) AS rank
     FROM memory_search
-    WHERE content_tsv @@ plainto_tsquery('english', $1)
+    WHERE content_tsv @@ websearch_to_tsquery('english', $1)
       AND active = true
   `;
   const params = [queryText];
