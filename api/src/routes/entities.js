@@ -232,51 +232,76 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
       return res.status(500).json({ error: 'Merge requires postgres backend' });
     }
 
-    // Move memory links from secondary to primary (skip conflicts)
-    const moveResult = await store.pool.query(`
-      UPDATE entity_memory_links SET entity_id = $1
-      WHERE entity_id = $2
-      AND NOT EXISTS (
-        SELECT 1 FROM entity_memory_links existing
-        WHERE existing.entity_id = $1
-        AND existing.memory_id = entity_memory_links.memory_id
-        AND existing.role = entity_memory_links.role
-      )
-    `, [primary.id, secondary.id]);
-    const movedLinks = moveResult.rowCount || 0;
+    // All five mutations run on one client in a transaction so a mid-merge
+    // failure can't leave the graph half-moved (links moved but secondary still
+    // alive, etc.).
+    const client = await store.pool.connect();
+    let movedLinks = 0;
+    try {
+      await client.query('BEGIN');
 
-    // Move relationships from secondary to primary. Some moves will collide
-    // with an existing (source, target, type) row on the primary side — let
-    // the unique-constraint violations (SQLSTATE 23505) slide, but surface
-    // any other error through the route's outer handler.
-    const ignoreUnique = (e) => {
-      if (e.code !== '23505') throw e;
-    };
-    await store.pool.query(`
-      UPDATE entity_relationships SET source_entity_id = $1
-      WHERE source_entity_id = $2
-      AND target_entity_id != $1
-    `, [primary.id, secondary.id]).catch(ignoreUnique);
-    await store.pool.query(`
-      UPDATE entity_relationships SET target_entity_id = $1
-      WHERE target_entity_id = $2
-      AND source_entity_id != $1
-    `, [primary.id, secondary.id]).catch(ignoreUnique);
+      // Move memory links from secondary to primary (skip conflicts)
+      const moveResult = await client.query(`
+        UPDATE entity_memory_links SET entity_id = $1
+        WHERE entity_id = $2
+        AND NOT EXISTS (
+          SELECT 1 FROM entity_memory_links existing
+          WHERE existing.entity_id = $1
+          AND existing.memory_id = entity_memory_links.memory_id
+          AND existing.role = entity_memory_links.role
+        )
+      `, [primary.id, secondary.id]);
+      movedLinks = moveResult.rowCount || 0;
 
-    // Create alias from secondary name
-    await store.pool.query(
-      `INSERT INTO entity_aliases (entity_id, alias, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
-      [primary.id, secondary.canonical_name]
-    );
+      // Move relationships from secondary to primary. Rows that would collide
+      // with an existing (source, target, type) on the primary side are skipped
+      // via NOT EXISTS — a bare multi-row UPDATE would fail WHOLESALE on the
+      // first 23505, and the rolled-back rows would then be destroyed by the
+      // secondary's CASCADE delete below. Skipped duplicates die with the
+      // secondary, which is the intended dedup.
+      await client.query(`
+        UPDATE entity_relationships SET source_entity_id = $1
+        WHERE source_entity_id = $2 AND target_entity_id != $1
+        AND NOT EXISTS (
+          SELECT 1 FROM entity_relationships existing
+          WHERE existing.source_entity_id = $1
+          AND existing.target_entity_id = entity_relationships.target_entity_id
+          AND existing.relationship_type = entity_relationships.relationship_type
+        )
+      `, [primary.id, secondary.id]);
+      await client.query(`
+        UPDATE entity_relationships SET target_entity_id = $1
+        WHERE target_entity_id = $2 AND source_entity_id != $1
+        AND NOT EXISTS (
+          SELECT 1 FROM entity_relationships existing
+          WHERE existing.target_entity_id = $1
+          AND existing.source_entity_id = entity_relationships.source_entity_id
+          AND existing.relationship_type = entity_relationships.relationship_type
+        )
+      `, [primary.id, secondary.id]);
 
-    // Update mention count on primary
-    await store.pool.query(
-      'UPDATE entities SET mention_count = mention_count + $1 WHERE id = $2',
-      [secondary.mention_count || 0, primary.id]
-    );
+      // Create alias from secondary name
+      await client.query(
+        `INSERT INTO entity_aliases (entity_id, alias, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+        [primary.id, secondary.canonical_name]
+      );
 
-    // Delete secondary (CASCADE removes remaining links/aliases)
-    await store.pool.query('DELETE FROM entities WHERE id = $1', [secondary.id]);
+      // Update mention count on primary
+      await client.query(
+        'UPDATE entities SET mention_count = mention_count + $1 WHERE id = $2',
+        [secondary.mention_count || 0, primary.id]
+      );
+
+      // Delete secondary (CASCADE removes remaining links/aliases)
+      await client.query('DELETE FROM entities WHERE id = $1', [secondary.id]);
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
 
     console.log(`[entities:merge] Merged "${secondary.canonical_name}" → "${primary.canonical_name}" (${movedLinks} links moved)`);
 

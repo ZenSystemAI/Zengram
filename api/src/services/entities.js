@@ -60,6 +60,16 @@ const KNOWN_SYSTEMS = {
   'claude code': 'agent',
 };
 
+// Pre-compiled word-boundary patterns for KNOWN_SYSTEMS. Matches the KNOWN_TECH
+// approach — a raw lowerText.includes() produced substring false positives
+// (e.g. a client key firing inside a longer unrelated token).
+const KNOWN_SYSTEMS_PATTERNS = new Map(
+  Object.entries(KNOWN_SYSTEMS).map(([keyword, type]) => {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [keyword, { pattern: new RegExp(`\\b${escaped}\\b`, 'i'), type }];
+  })
+);
+
 // In-memory alias cache
 let aliasCache = new Map();
 
@@ -150,9 +160,9 @@ export function extractEntities(text, clientId, sourceAgent) {
     }
   }
 
-  // 4b. Known system/product names
-  for (const [keyword, type] of Object.entries(KNOWN_SYSTEMS)) {
-    if (lowerText.includes(keyword)) {
+  // 4b. Known system/product names (word-boundary matched, like KNOWN_TECH)
+  for (const [keyword, { pattern, type }] of KNOWN_SYSTEMS_PATTERNS) {
+    if (pattern.test(lowerText)) {
       const canonical = keyword.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
       add(canonical, type, 'mentioned', CONFIDENCE.KNOWN_SYSTEM);
     }
@@ -197,11 +207,24 @@ export async function reclassifyEntity(entityName, newType, storeFns) {
   }
 
   const oldType = entity.entity_type;
-  await store.pool.query('UPDATE entities SET entity_type = $1 WHERE id = $2', [newType, entity.id]);
-  const linkResult = await store.pool.query(
-    'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
-  );
-  const memoriesAffected = parseInt(linkResult.rows[0]?.count) || 0;
+  // Update + count on one client in a transaction so the reported count reflects
+  // a consistent post-update view (mirrors supersedeAndInsert in pgvector.js).
+  const client = await store.pool.connect();
+  let memoriesAffected = 0;
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE entities SET entity_type = $1 WHERE id = $2', [newType, entity.id]);
+    const linkResult = await client.query(
+      'SELECT COUNT(*) as count FROM entity_memory_links WHERE entity_id = $1', [entity.id]
+    );
+    memoriesAffected = parseInt(linkResult.rows[0]?.count) || 0;
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 
   addToAliasCache(entityName, entity.id, entity.canonical_name, newType);
 

@@ -26,6 +26,15 @@ const PATTERNS = [
   { regex: /(?:postgres(?:ql)?|mongodb(?:\+srv)?|redis|mysql|amqp):\/\/[^\s'"]+/gi, replace: '[CONNECTION_STRING_REDACTED]' },
   // OpenAI / Anthropic API keys
   { regex: /sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}/g, replace: '[API_KEY_REDACTED]' },
+  // Stripe keys — secret/restricted/publishable, live + test variants
+  { regex: /\b[srp]k_(?:live|test)_[A-Za-z0-9]{10,}/g, replace: '[STRIPE_KEY_REDACTED]' },
+  // Google API keys (AIza + 35 chars). No trailing \b — the fixed length bounds it.
+  { regex: /AIza[0-9A-Za-z_-]{35}/g, replace: '[GOOGLE_API_KEY_REDACTED]' },
+  // Slack tokens (bot/user/app/refresh/legacy: xoxb/xoxa/xoxp/xoxr/xoxs)
+  { regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, replace: '[SLACK_TOKEN_REDACTED]' },
+  // GitHub tokens (personal/oauth/user/server/refresh: ghp/gho/ghu/ghs/ghr).
+  // Underscore + 36+ chars keeps prose like "ghost"/"ghoul" from matching.
+  { regex: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, replace: '[GITHUB_TOKEN_REDACTED]' },
 ];
 
 export function scrubCredentials(text) {
