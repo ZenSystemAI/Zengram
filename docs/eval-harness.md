@@ -39,15 +39,17 @@ stack**, not a unit test. It is deliberately:
 Both metrics are computed per query against that query's `expected_ids`, then averaged over the query
 set. `k` defaults to **5 and 10** (reported side by side; a query may override with its own `k`).
 
-- **recall@k** — did *any* expected id appear in the top-k returned results?
-  Per query it is `1` if `expected_ids ∩ top_k ≠ ∅`, else `0`. (This is the "hit@k" form: it
-  rewards surfacing at least one relevant memory in the window. A stricter "fraction of expected ids
-  found in top-k" variant is noted in [Open questions](#open-questions).)
+- **hit@k** — did *any* expected id appear in the top-k returned results?
+  Per query it is `1` if `expected_ids ∩ top_k ≠ ∅`, else `0` — rewards surfacing at least one
+  relevant memory in the window.
+- **recall@k** (fraction form) — `|expected_ids ∩ top_k| / |expected_ids|`. With multi-id
+  expectations hit@k saturates too easily; the fraction shows how much of the labeled answer set
+  actually surfaced.
 - **MRR@k** (Mean Reciprocal Rank) — `1 / rank` of the **first** expected id within the top-k
   (rank is 1-based), or `0` if no expected id is in the top-k. Averaged over the query set, this
   rewards ranking a relevant memory *higher*, not merely *present*.
 
-Example: top-k ids `[m3, m1, m7, m2, m9]`, expected `[m7]` → recall@5 = 1, reciprocal rank = 1/3.
+Example: top-k ids `[m3, m1, m7, m2, m9]`, expected `[m7]` → hit@5 = 1, recall@5 = 1.0, reciprocal rank = 1/3.
 
 ## Corpus / fixture format
 
@@ -103,28 +105,29 @@ node scripts/eval/run-eval.js scripts/eval/fixtures/smoke.json   # explicit fixt
 
 Flow:
 
-1. **Seed** — `POST {API}/export/import` with `{ data: fixture.memories }` (header `x-api-key`).
-   The endpoint re-embeds each record and preserves the supplied `id`. The harness prints
+1. **Seed** — `POST {API}/export/import` with `{ data: fixture.memories, operator_approved: true }`
+   (header `x-api-key`; import is a gated destructive-restore endpoint since v4.3.0). The endpoint
+   re-embeds each record and preserves the supplied `id`. The harness prints
    `imported / skipped / errors`.
 2. **Query** — for each labeled query, `GET {API}/memory/search?q=<encoded>&limit=<k>&format=index`,
-   collect the returned `id`s in rank order, and compute hit@k + reciprocal rank vs `expected_ids`.
-   (`format=index` returns the minimal `{ id, effective_score, type, summary, … }` shape — all the
-   harness needs is `id` in rank order, so the cheapest format is used.)
+   collect the returned `id`s in rank order, and compute hit@k + recall@k + reciprocal rank vs
+   `expected_ids`. (`format=index` returns the minimal `{ id, effective_score, type, summary, … }`
+   shape — all the harness needs is `id` in rank order, so the cheapest format is used.)
 3. **Report** — a per-query line plus an aggregate line.
 
 Expected output (illustrative — exact numbers depend on the live store and embedding provider):
 
 ```
-Seeding 10 memories via POST /export/import ...
-  imported=10 skipped=0 errors=0
+Seeding 34 memories via POST /export/import ...
+  imported=34 skipped=0 errors=0
 
-query                                              recall@5  rr@5   recall@10  rr@10
--------------------------------------------------- --------  -----  ---------  -----
-what port does the staging database listen on         1     1.000      1      1.000
-how often do we deploy                                 1     0.500      1      0.500
+query                                                 hit@5   rec@5    rr@5    hit@10  rec@10   rr@10
+--------------------------------------------------------------------------------------------------
+what port does the staging database listen on             1   1.000   1.000        1   1.000   1.000
+how often do we deploy and on which day                   1   1.000   0.500        1   1.000   0.500
 ...
--------------------------------------------------- --------  -----  ---------  -----
-AGGREGATE (n=5)                                    R@5=0.80  MRR@5=0.65   R@10=0.80  MRR@10=0.65
+--------------------------------------------------------------------------------------------------
+AGGREGATE (n=12)  hit@5=0.833 R@5=0.792 MRR@5=0.653   hit@10=0.917 R@10=0.875 MRR@10=0.653
 ```
 
 If the API is unreachable, the harness prints a one-line "is the API running?" hint (with the URL it
@@ -188,9 +191,9 @@ These are the spike's primary deliverable — decide them before this graduates 
    ids. If that lands, fixtures can no longer pin ids directly and the harness must instead seed,
    read back the server-assigned ids (e.g. via `GET /export`), and map fixture labels → real ids
    before querying. Coordinate so the two changes don't silently break each other.
-5. **recall@k definition — hit vs fraction.** This spike uses the "hit@k" form (1 if *any* expected
-   id is in top-k). For multi-answer queries a "fraction of expected ids found in top-k" form is more
-   informative. Pick one (or report both) before the fixture set grows multi-answer queries.
+5. **recall@k definition — hit vs fraction.** RESOLVED: the harness reports both — `hit@k` (any
+   expected id in top-k) and `recall@k` (fraction of expected ids in top-k) — since the fixture now
+   contains multi-answer queries.
 6. **Seeding determinism under dedup.** Because import dedups on `content_hash`
    (`api/src/routes/export.js:157`), repeat runs against a non-empty store report `skipped` rather
    than re-seeding. Decide whether the harness should require an empty store, auto-clean its corpus

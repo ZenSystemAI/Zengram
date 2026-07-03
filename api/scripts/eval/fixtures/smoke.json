@@ -1,5 +1,5 @@
 {
-  "_comment": "Tiny smoke fixture for the retrieval eval harness (SPIKE). All content is invented and generic — no real names, clients, or secrets. See docs/eval-harness.md.",
+  "_comment": "Retrieval eval fixture (v2). All content is invented and generic — no real names, clients, or secrets. The corpus deliberately contains near-miss distractor clusters (several port facts, several TLS/outage events, competing queue discussions) so ranking quality actually shows up in the numbers. See docs/eval-harness.md.",
   "memories": [
     {
       "id": "fact-staging-db-port",
@@ -66,6 +66,166 @@
       "subject": "billing-service",
       "content": "billing-service is healthy; p95 latency 180ms, error rate under 0.1%.",
       "importance": "medium"
+    },
+
+    {
+      "id": "fact-redis-port",
+      "type": "fact",
+      "key": "redis-port",
+      "content": "The shared Redis cache for acme-corp listens on port 6390 (non-default to avoid collisions).",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-rabbitmq-mgmt-port",
+      "type": "fact",
+      "key": "rabbitmq-mgmt-port",
+      "content": "The RabbitMQ management console is exposed on port 15672, internal network only.",
+      "importance": "low"
+    },
+    {
+      "id": "fact-globex-db-port",
+      "type": "fact",
+      "key": "globex-db-port",
+      "content": "The production database for globex-media runs on port 5433.",
+      "client_id": "globex-media",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-metrics-retention",
+      "type": "fact",
+      "key": "metrics-retention",
+      "content": "Prometheus metrics retention is 30 days; long-term metrics are downsampled into the analytics warehouse.",
+      "importance": "low"
+    },
+    {
+      "id": "fact-backup-schedule",
+      "type": "fact",
+      "key": "backup-schedule",
+      "content": "Database backups run nightly at 03:15 UTC with a 14-day retention window; restores are tested monthly.",
+      "importance": "high"
+    },
+    {
+      "id": "fact-oncall-rotation",
+      "type": "fact",
+      "key": "oncall-rotation",
+      "content": "On-call rotation switches every Monday at 09:00 local; the schedule lives in the ops calendar.",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-sku-widget-pro",
+      "type": "fact",
+      "key": "sku-widget-pro",
+      "content": "The widget-pro subscription SKU is WGT-PRO-9941 and is billed annually.",
+      "importance": "medium"
+    },
+    {
+      "id": "event-incident-2026-06-search",
+      "type": "event",
+      "content": "On 2026-06-11 search latency spiked to 4s p95 for about an hour after an index rebuild saturated disk IO; resolved by throttling the rebuild job.",
+      "importance": "high"
+    },
+    {
+      "id": "event-incident-2026-04-tls-renewal",
+      "type": "event",
+      "content": "On 2026-04-19 the staging environment briefly served an invalid TLS chain during a certificate rotation dry-run; no customer impact, runbook updated.",
+      "importance": "low"
+    },
+    {
+      "id": "event-cdn-provider-switch",
+      "type": "event",
+      "content": "Switched the CDN provider for static assets to reduce egress cost by roughly 40%; cache warm-up completed within two hours.",
+      "importance": "medium"
+    },
+    {
+      "id": "event-rate-limit-tuning",
+      "type": "event",
+      "content": "Raised the public API rate limit from 60 to 120 requests per minute per key after sustained 429 complaints from integration partners.",
+      "importance": "medium"
+    },
+    {
+      "id": "event-globex-launch",
+      "type": "event",
+      "content": "Launched the globex-media newsroom portal; first 48 hours saw 12k unique visitors with no errors.",
+      "client_id": "globex-media",
+      "importance": "medium"
+    },
+    {
+      "id": "decision-monorepo",
+      "type": "decision",
+      "content": "Decided to consolidate the three service repositories into a single monorepo to simplify dependency upgrades and CI caching; migration scheduled over two sprints.",
+      "importance": "high"
+    },
+    {
+      "id": "decision-feature-flags-vendor",
+      "type": "decision",
+      "content": "Decided to keep the home-grown feature-flag system instead of adopting a vendor; the flag surface is small and vendor pricing scales per seat.",
+      "importance": "medium"
+    },
+    {
+      "id": "decision-kafka-analytics",
+      "type": "decision",
+      "content": "Decided to use Kafka for the analytics event stream (distinct from the job queue) because replayable history matters there; RabbitMQ stays for background jobs.",
+      "importance": "medium"
+    },
+    {
+      "id": "decision-retire-legacy-reports",
+      "type": "decision",
+      "content": "Decided to retire the legacy PDF report generator after usage dropped below 2% of accounts; sunset notice goes out next month.",
+      "importance": "low"
+    },
+    {
+      "id": "status-search-service-health",
+      "type": "status",
+      "subject": "search-service",
+      "content": "search-service is healthy after the June index-rebuild incident; p95 latency back to 220ms.",
+      "importance": "medium"
+    },
+    {
+      "id": "status-onboarding-rollout",
+      "type": "status",
+      "subject": "onboarding-widget-rollout",
+      "content": "onboarding-widget rollout is at 50% of accounts; error budget intact, full rollout gated on next week's review.",
+      "importance": "medium"
+    },
+    {
+      "id": "status-monorepo-migration",
+      "type": "status",
+      "subject": "monorepo-migration",
+      "content": "monorepo migration is in progress: two of three repositories merged, CI pipeline green, remaining repo scheduled this sprint.",
+      "importance": "high"
+    },
+    {
+      "id": "fact-error-budget-policy",
+      "type": "fact",
+      "key": "error-budget-policy",
+      "content": "Error budget policy: a service that burns more than half its monthly budget freezes feature deploys until burn rate normalizes.",
+      "importance": "high"
+    },
+    {
+      "id": "event-load-test-q2",
+      "type": "event",
+      "content": "Q2 load test passed: sustained 3x normal traffic for 30 minutes with p99 under 800ms across all core services.",
+      "importance": "medium"
+    },
+    {
+      "id": "fact-support-sla",
+      "type": "fact",
+      "key": "support-sla",
+      "content": "Support SLA for priority-1 tickets is a 30-minute first response, 24/7, handled by the on-call engineer.",
+      "importance": "high"
+    },
+    {
+      "id": "event-dependency-audit",
+      "type": "event",
+      "content": "Completed the quarterly dependency audit; upgraded twelve packages, removed two unused transitive dependencies, zero known vulnerabilities remain.",
+      "importance": "low"
+    },
+    {
+      "id": "fact-widget-basic-sku",
+      "type": "fact",
+      "key": "sku-widget-basic",
+      "content": "The widget-basic subscription SKU is WGT-BAS-1204 and is billed monthly.",
+      "importance": "low"
     }
   ],
   "queries": [
@@ -86,13 +246,48 @@
     },
     {
       "q": "which message queue did we choose and why",
-      "expected_ids": ["decision-queue-rabbitmq"],
-      "k": 5
+      "expected_ids": ["decision-queue-rabbitmq", "decision-kafka-analytics"],
+      "k": 10
     },
     {
       "q": "what are the database ports for acme-corp",
       "expected_ids": ["fact-prod-db-port", "fact-staging-db-port"],
       "k": 10
+    },
+    {
+      "q": "certificate problems we have had",
+      "expected_ids": ["event-incident-2026-05-payments", "event-incident-2026-04-tls-renewal"],
+      "k": 10
+    },
+    {
+      "q": "what is the SKU for the pro widget plan",
+      "expected_ids": ["fact-sku-widget-pro"],
+      "k": 5
+    },
+    {
+      "q": "how is the monorepo consolidation going",
+      "expected_ids": ["status-monorepo-migration", "decision-monorepo"],
+      "k": 10
+    },
+    {
+      "q": "when do backups run and how long are they kept",
+      "expected_ids": ["fact-backup-schedule"],
+      "k": 5
+    },
+    {
+      "q": "why did search get slow in June",
+      "expected_ids": ["event-incident-2026-06-search"],
+      "k": 5
+    },
+    {
+      "q": "what happens when a service burns its error budget",
+      "expected_ids": ["fact-error-budget-policy"],
+      "k": 5
+    },
+    {
+      "q": "globex production database port",
+      "expected_ids": ["fact-globex-db-port"],
+      "k": 5
     }
   ]
 }

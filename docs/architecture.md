@@ -22,7 +22,7 @@ graph TB
         EMBED[Embedding Interface<br>OpenAI / Gemini / Ollama]
         LLM_I[LLM Interface<br>OpenAI / Anthropic / Gemini / Ollama]
         ENT[Entity Extractor<br>regex + alias cache]
-        KW[Keyword Search<br>BM25 via tsvector]
+        KW[Keyword Search<br>Full-text via tsvector]
         RRF[RRF Fusion<br>reciprocal rank merge]
         CONS[Consolidation Engine<br>LLM-driven merge/dedup]
         SCRUB[Credential Scrubber]
@@ -54,7 +54,7 @@ Defined in `api/src/index.js`:
 2. **Initialize embedding provider** -- OpenAI, Gemini, or Ollama (test embed validates connectivity; its dimensions size the vector column)
 3. **Initialize pgvector** -- Ensure the `pgvector` extension, vector column, and HNSW + entity indexes exist
 4. **Initialize structured store** -- Postgres (the only supported backend)
-5. **Initialize keyword search** -- BM25 via Postgres `tsvector` with a GIN index
+5. **Initialize keyword search** -- Full-text search via Postgres `tsvector` with a GIN index
 6. **Load entity alias cache** -- Pre-populates in-memory alias map from the structured store + built-in tech dict
 7. **Initialize consolidation LLM** (if enabled) -- Sets up cron schedule (default: every 6 hours)
 8. **Start Express server** -- Binds to `HOST:PORT` (default `127.0.0.1:8084`)
@@ -83,7 +83,7 @@ Defined in `api/src/index.js`:
 | `consolidation.js` | LLM consolidation pipeline: merge, contradictions, entities, relationships |
 | `entities.js` | Regex + alias-cache entity extraction, reclassification, linking |
 | `rrf.js` | Reciprocal Rank Fusion: merges vector + keyword result lists |
-| `keyword-search.js` | BM25 full-text search via Postgres tsvector |
+| `keyword-search.js` | Full-text keyword search via Postgres tsvector (ts_rank_cd) |
 | `query-expander.js` | Query expansion for improved recall |
 | `relevance-scorer.js` | Confidence decay + access-boost scoring on results |
 | `temporal-resolver.js` | Resolves relative time references for `at_time` queries |
@@ -117,7 +117,7 @@ Gemini uses task-specific embeddings: `RETRIEVAL_DOCUMENT` for storage, `RETRIEV
 | File | Backend | Features |
 |------|---------|----------|
 | `interface.js` | Router | Selects by `STRUCTURED_STORE` env var; only `postgres` is supported (throws otherwise) |
-| `postgres.js` | Postgres | Events, facts, statuses, entities, aliases, relationships + tsvector GIN index for full BM25 |
+| `postgres.js` | Postgres | Events, facts, statuses, entities, aliases, relationships + tsvector GIN index for full-text search |
 
 ### Middleware (`api/src/middleware/`)
 
@@ -179,7 +179,7 @@ sequenceDiagram
     participant API as Express API
     participant E as Embedder
     participant Q as pgvector (Vector)
-    participant KW as Keyword (BM25)
+    participant KW as Keyword (full-text)
     participant RRF as RRF Fusion
 
     A->>API: GET /memory/search?q=...
@@ -193,15 +193,17 @@ sequenceDiagram
     KW-->>RRF: [{memory_id, rank}]
     RRF->>RRF: reciprocalRankFusion(rankedLists, k=60)
     RRF-->>API: [{id, rrf_score, sources}]
-    API->>API: Apply confidence decay + access boost
+    API->>API: Filter parity re-check (category/date/at_time on keyword hits)
+    API->>API: Blend RRF + similarity × confidence decay × capped access boost × importance
+    API->>API: Session-diversity round-robin, trim to limit
     API-->>A: {results: [...]}
 ```
 
 The two retrieval paths run in parallel:
-1. **Vector search** (pgvector cosine similarity, score threshold 0.3)
-2. **Keyword search** (BM25 via Postgres `ts_rank_cd`)
+1. **Vector search** (pgvector cosine similarity; score floor `SEARCH_SCORE_FLOOR`, default 0.55 on the `0.5 + cosine/2` scale)
+2. **Keyword search** (Postgres full-text: `websearch_to_tsquery` + `ts_rank_cd`)
 
-Results are fused using **Reciprocal Rank Fusion**: `score(d) = sum(1 / (k + rank))` where k=60 (configurable via `RRF_K`).
+Results are fused using **Reciprocal Rank Fusion**: `score(d) = sum(1 / (k + rank))` where k=60 (configurable via `RRF_K`). The final ordering blends the normalized RRF score with vector similarity (`RANK_W_SIM`/`RANK_W_RRF`, services/ranking.js) — a memory found by both paths genuinely outranks an equal-similarity memory found by one.
 
 ## Data Flow: Consolidation Path
 
@@ -272,7 +274,7 @@ Tables created by the Postgres backend:
 | `entity_aliases` | id, entity_id, alias | Alternative names for entities |
 | `entity_memory_links` | id, entity_id, memory_id, role, linked_at | Entity-to-memory edges |
 | `entity_relationships` | id, source_entity_id, target_entity_id, relationship_type, strength, first_seen, last_seen | Entity-to-entity edges |
-| `memory_search` | memory_id, content, content_tsv, client_id, source_agent, type, active | BM25 full-text with GIN index |
+| `memory_search` | memory_id, content, content_tsv, client_id, source_agent, type, active | Full-text tsvector with GIN index |
 
 ## Docker Deployment
 

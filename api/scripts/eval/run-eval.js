@@ -99,9 +99,11 @@ async function seed(memories) {
 
   for (let i = 0; i < memories.length; i += CHUNK) {
     const batch = memories.slice(i, i + CHUNK);
+    // Import is a destructive-restore endpoint and requires explicit operator
+    // approval since v4.3.0 — without this flag the seed 403s.
     const result = await brainRequest('/export/import', {
       method: 'POST',
-      body: JSON.stringify({ data: batch }),
+      body: JSON.stringify({ data: batch, operator_approved: true }),
     });
     imported += result.imported || 0;
     skipped += result.skipped || 0;
@@ -124,11 +126,21 @@ async function searchIds(q, k) {
 }
 
 // --- Metrics ---
-// recall@k (hit form): 1 if any expected id is in the top-k, else 0.
+// hit@k: 1 if any expected id is in the top-k, else 0.
 function recallAtK(rankedIds, expectedIds, k) {
   const topK = rankedIds.slice(0, k);
   const expected = new Set(expectedIds);
   return topK.some(id => expected.has(id)) ? 1 : 0;
+}
+
+// recall@k (fraction form): |expected ∩ top-k| / |expected|. With multi-id
+// expectations, hit@k saturates too easily — the fraction shows how much of
+// the labeled answer set actually surfaced.
+function recallFractionAtK(rankedIds, expectedIds, k) {
+  if (!expectedIds.length) return 0;
+  const topK = new Set(rankedIds.slice(0, k));
+  const found = expectedIds.filter(id => topK.has(id)).length;
+  return found / expectedIds.length;
 }
 
 // reciprocal rank: 1 / (1-based rank of the first expected id within top-k), else 0.
@@ -167,12 +179,12 @@ async function main() {
   // Header
   const QW = 50; // query column width
   const header = pad('query', QW) +
-    DEFAULT_KS.map(k => `recall@${k}`.padStart(10) + `  rr@${k}`.padStart(8)).join('  ');
+    DEFAULT_KS.map(k => `hit@${k}`.padStart(8) + `rec@${k}`.padStart(8) + `rr@${k}`.padStart(8)).join('  ');
   console.log(header);
   console.log('-'.repeat(header.length));
 
   // Accumulators per default-k
-  const totals = Object.fromEntries(DEFAULT_KS.map(k => [k, { recall: 0, rr: 0 }]));
+  const totals = Object.fromEntries(DEFAULT_KS.map(k => [k, { hit: 0, recall: 0, rr: 0 }]));
   const n = fixture.queries.length;
 
   for (const query of fixture.queries) {
@@ -184,11 +196,13 @@ async function main() {
 
     let row = pad(q, QW);
     for (const k of DEFAULT_KS) {
-      const r = recallAtK(rankedIds, expected, k);
+      const hit = recallAtK(rankedIds, expected, k);
+      const rec = recallFractionAtK(rankedIds, expected, k);
       const rr = reciprocalRankAtK(rankedIds, expected, k);
-      totals[k].recall += r;
+      totals[k].hit += hit;
+      totals[k].recall += rec;
       totals[k].rr += rr;
-      row += String(r).padStart(10) + '  ' + fmt(rr).padStart(8) + '  ';
+      row += String(hit).padStart(8) + fmt(rec).padStart(8) + fmt(rr).padStart(8) + '  ';
     }
     console.log(row.trimEnd());
   }
@@ -196,9 +210,10 @@ async function main() {
   // Aggregate
   console.log('-'.repeat(header.length));
   const aggParts = DEFAULT_KS.map(k => {
+    const hit = n ? totals[k].hit / n : 0;
     const recall = n ? totals[k].recall / n : 0;
     const mrr = n ? totals[k].rr / n : 0;
-    return `R@${k}=${fmt(recall)} MRR@${k}=${fmt(mrr)}`;
+    return `hit@${k}=${fmt(hit)} R@${k}=${fmt(recall)} MRR@${k}=${fmt(mrr)}`;
   });
   console.log(`AGGREGATE (n=${n})  ` + aggParts.join('   '));
 }

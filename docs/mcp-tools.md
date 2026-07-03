@@ -45,7 +45,7 @@ Store a memory in the Shared Brain. Supports four memory types with automatic de
 |-------|------|----------|-------------|
 | `type` | string | Yes | `event`, `fact`, `decision`, `status` |
 | `content` | string | Yes | Memory text. Be specific and include context. |
-| `source_agent` | string | Yes | Agent identifier (default: `"claude-code"` if omitted via MCP) |
+| `source_agent` | string | No | Agent identifier. Defaults to `BRAIN_MCP_SOURCE_AGENT` env, then `"claude-code"`. Multi-agent fleets set the env per agent so writes attribute correctly. |
 | `client_id` | string | No | Client slug or `"global"` |
 | `category` | string | No | `semantic`, `episodic`, `procedural` |
 | `importance` | string | No | `critical`, `high`, `medium`, `low` |
@@ -80,7 +80,7 @@ Store a memory in the Shared Brain. Supports four memory types with automatic de
 
 ## brain_search
 
-Multi-path search using vector (semantic) and keyword (BM25 exact match) retrieval in parallel, fused with Reciprocal Rank Fusion.
+Multi-path search using vector (semantic) and full-text keyword retrieval in parallel, fused with Reciprocal Rank Fusion.
 
 **Parameters:**
 

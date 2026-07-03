@@ -55,23 +55,24 @@ Events are immutable history. Facts upsert by key — new facts supersede old on
   <img src=".github/dual-database.jpg" alt="Single-Postgres Storage Design" width="600" />
 </p>
 
-Every memory lives in a single Postgres database: **pgvector** (HNSW) for semantic vector search and structured tables for queries, entities, and full-text BM25 search. Get both "find memories similar to X" and "give me all facts with key Y" from the same system — one container, no separate vector service.
+Every memory lives in a single Postgres database: **pgvector** (HNSW) for semantic vector search and structured tables for queries, entities, and full-text search. Get both "find memories similar to X" and "give me all facts with key Y" from the same system — one container, no separate vector service.
 
 ### Multi-Path Search
 
 Search runs two retrieval paths in parallel, fused with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf):
 
-1. **Vector search** — Cosine similarity via pgvector (HNSW)
-2. **Keyword search** — BM25 via Postgres tsvector
+1. **Vector search** — Cosine similarity via pgvector (HNSW, with iterative index scans on pgvector 0.8+ so tenant-scoped queries don't lose recall)
+2. **Full-text search** — Postgres tsvector (`websearch_to_tsquery` + `ts_rank_cd`)
 
-Items found by both paths get boosted. **98.4% retrieval accuracy** on LongMemEval.
+Final ranking blends the fused RRF signal with vector similarity, then weights confidence decay, access frequency (capped), temporal proximity, and importance — items found by both paths genuinely rank higher. **98.4% retrieval accuracy** on LongMemEval.
 
 ### Built for Multi-Agent
 
 - **Cross-agent briefings** — "What happened since I was last here?" returns updates from all other agents
-- **Credential scrubbing** — API keys, JWTs, passwords automatically redacted before storage
+- **Cross-agent corroboration** — when a second agent independently stores the same fact, it's recorded as an observation (`observed_by`), not dropped as a duplicate
+- **Credential scrubbing** — API keys, JWTs, passwords, cloud/service tokens automatically redacted before storage
 - **Entity extraction** — Regex + alias cache at write time
-- **LLM consolidation** — Periodic background process merges duplicates, flags contradictions, discovers connections
+- **LLM consolidation** — Periodic background process merges duplicates, resolves contradictions, discovers connections
 
 ## Benchmarks
 
@@ -87,7 +88,7 @@ Evaluated on [LongMemEval](https://github.com/xiaowu0162/LongMemEval), the acade
 | **QA accuracy** (GPT-4o answering from retrieved context) | **76.0%** |
 | Full-context GPT-4o (entire history in prompt, no retrieval) | 72.4% |
 
-The benchmark uses **cosine similarity only** — none of the API's multi-path features (BM25, temporal boost) were used. [Full methodology and per-category breakdown](docs/benchmarks.md).
+The benchmark uses **cosine similarity only** — none of the API's multi-path features (keyword full-text, temporal boost) were used. [Full methodology and per-category breakdown](docs/benchmarks.md).
 
 > LongMemEval tests single-agent chat recall. Zengram is built for multi-agent coordination — features like cross-agent briefings, typed memory, entity extraction, and credential scrubbing aren't measured by this benchmark but are core to production use.
 
@@ -97,7 +98,7 @@ The benchmark uses **cosine similarity only** — none of the API's multi-path f
 |---------|:-:|:-:|:-:|:-:|:-:|
 | Cross-machine by design | **Yes** | Cloud only | No | Cloud only | No |
 | Typed memory (event/fact/status/decision) | **Yes** | No | No | No | No |
-| Multi-path search (vector+BM25) | **Yes** | Vector only | Vector only | Hybrid | **Yes** |
+| Multi-path search (vector+full-text) | **Yes** | Vector only | Vector only | Hybrid | **Yes** |
 | Session briefings | **Yes** | No | No | No | No |
 | Credential scrubbing | **Yes** | No | No | No | No |
 | Entity extraction + linking | **Yes** | Graph (Pro) | No | **Yes** | No |

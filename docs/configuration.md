@@ -16,9 +16,13 @@ All configuration is via environment variables, defined in `.env` (loaded by Doc
 | `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN/Docker access. The `docker-compose.yml` overrides this to `0.0.0.0` inside the container. |
 | `API_BIND` | `127.0.0.1` | Docker port binding address. Set to `0.0.0.0` in `.env` to expose the API on all interfaces from the host. |
 
-## Authentication (v4)
+## Authentication
 
-Per-agent API keys were retired in v4. A single admin key (`BRAIN_API_KEY`) authenticates every caller, and all writes are attributed to `source_agent: "claude-code"` regardless of which Claude variant or machine made the call. This collapsed `ti-claude`, `mini-claude`, `morpheus`, `neo`, `autolab`, and `n8n` into one canonical identity.
+A single admin key (`BRAIN_API_KEY`) authenticates every caller. Agent identity is declarative: each write carries its own validated `source_agent`, and briefings, filters, and cross-agent corroboration key off that identity — give every agent in your fleet a stable name. The key does not bind identity (any caller with the key can write as any agent); scoped per-agent keys are on the roadmap.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRUST_PROXY` | (unset) | Express `trust proxy` setting (`true`/`false`, hop count, or IP/CIDR list). Set when running behind a reverse proxy so the failed-auth IP throttle keys on the real client IP. |
 
 ## Rate Limiting
 
@@ -83,8 +87,10 @@ Dimensions are auto-detected from the model on first embed.
 |----------|---------|-------------|
 | `POSTGRES_URL` | (required) | Connection string: `postgresql://user:pass@host:5432/dbname` |
 | `POSTGRES_PASSWORD` | `brain_secret` | Used by docker-compose for the Postgres container |
+| `PGPOOL_MAX` | `10` | Max connections per `pg.Pool` (applies to both the vector-store and structured-store pools) |
+| `PG_STATEMENT_TIMEOUT_MS` | `30000` | Per-connection `statement_timeout` in ms |
 
-Postgres holds events, facts, statuses, entities, aliases, and relationships, provides full BM25 via `tsvector` with a GIN index, and (via the `pgvector` extension) stores the embedding vectors. One container backs both the structured store and the vector store.
+Postgres holds events, facts, statuses, entities, aliases, and relationships, provides full-text search via `tsvector` with a GIN index, and (via the `pgvector` extension) stores the embedding vectors. One container backs both the structured store and the vector store.
 
 ## Consolidation Engine
 
@@ -96,6 +102,9 @@ Postgres holds events, facts, statuses, entities, aliases, and relationships, pr
 | `CONSOLIDATION_LLM` | `openai` | LLM provider: `openai`, `anthropic`, `ollama`, `gemini` |
 | `CONSOLIDATION_MODEL` | `gpt-4o-mini` | Model name |
 | `ANTHROPIC_API_KEY` | (for anthropic provider) | Anthropic API key |
+| `CONSOLIDATION_MAX_MEMORIES` | `500` | Per-run backlog cap, processed oldest-first; the remainder defers to the next run |
+| `LLM_MAX_TOKENS` | `8192` | Max output tokens per consolidation LLM call (truncation now throws a typed error instead of failing JSON-parse) |
+| `LLM_RETRY_BASE_MS` | `500` | Base delay for the single-retry exponential backoff on 429/5xx/network errors |
 
 The consolidation engine processes memories in batches of 50, grouped by client_id. It:
 - Merges duplicate facts
@@ -165,16 +174,24 @@ Critical and high-importance events are never auto-expired. Events that have bee
 |----------|---------|-------------|
 | `ENTITY_MIN_CONFIDENCE` | `0.80` | Confidence threshold for confidence-gated NER. Extracted entities below this score are discarded. |
 
-## Hybrid Retrieval
+## Hybrid Retrieval & Ranking
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MULTI_PATH_SEARCH` | `true` | Enable parallel vector + keyword (BM25) search with RRF fusion |
+| `MULTI_PATH_SEARCH` | `true` | Enable parallel vector + full-text search with RRF fusion |
 | `RRF_K` | `60` | RRF smoothing constant. Range 50-100. Higher = more equal weighting across ranks. |
+| `SEARCH_SCORE_FLOOR` | `0.55` | Minimum vector similarity, on the `0.5 + cosine/2` scale (0.55 ≈ cosine 0.1) |
+| `RANK_W_SIM` | `0.6` | Final-ranking blend weight for vector similarity |
+| `RANK_W_RRF` | `0.4` | Final-ranking blend weight for the normalized RRF score |
+| `RANK_ACCESS_BOOST_CAP` | `2.0` | Cap on the access-frequency multiplier (prevents popularity runaway) |
+| `RANK_KEYWORD_ONLY_SIM` | `0.55` | Similarity stand-in for results found only by the keyword path |
+| `BRAIN_TIMEZONE` | (server zone) | IANA timezone used to resolve "today"/"this week" queries to civil-day boundaries |
 
 **RRF_K tuning**: Lower values (50) give more weight to top-ranked items in each list. Higher values (100) flatten the distribution, giving later-ranked items more influence. Default of 60 works well for most cases.
 
-Graph BFS search was removed in v4. At the current scale (~500 active memories), vector + BM25 was catching everything the graph path was contributing, and the graph machinery (entity-relationships table, BFS traversal, co-occurrence scoring) added complexity without measurable retrieval lift. The `entities` table and alias cache are still maintained for coreference and stats.
+**Ranking blend**: the final order is `(RANK_W_SIM × similarity + RANK_W_RRF × rrf/max_rrf) × confidence-decay × capped-access-boost × temporal-proximity × importance-weight` (`api/src/services/ranking.js`). A/B any change with the [eval harness](eval-harness.md) before shipping it.
+
+Graph BFS search was removed in v4. At the current scale (~500 active memories), vector + full-text was catching everything the graph path was contributing, and the graph machinery (entity-relationships table, BFS traversal, co-occurrence scoring) added complexity without measurable retrieval lift. The `entities` table and alias cache are still maintained for coreference and stats.
 
 ## MCP Server
 

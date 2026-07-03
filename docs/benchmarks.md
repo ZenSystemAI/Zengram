@@ -47,7 +47,7 @@ The benchmark runner (`benchmarks/longmemeval/query-direct.js`) bypasses the Exp
 
 **API features NOT used in this benchmark:**
 
-- Multi-path search (vector + BM25 keyword RRF fusion) -- **not used**
+- Multi-path search (vector + keyword RRF fusion) -- **not used**
 - Temporal date filtering / proximity boost -- **not used**
 - Query expansion -- **not used**
 - Session diversity re-ranking -- **not used**
@@ -61,13 +61,18 @@ The +21.1 point gain on temporal reasoning from swapping GPT-4o-mini to GPT-4o p
 
 ## Reproducing
 
+The original LongMemEval runner was a one-off script against the maintainer's deployment and is **not yet part of this repo** — so treat the numbers above as a point-in-time measurement (v2.5, cosine-only), not a claim you can currently re-derive from a fresh clone. Bringing a reproducible LongMemEval runner in-repo (through the full multi-path API pipeline this time) is on the roadmap.
+
+What you CAN run today is the in-repo retrieval eval harness, which measures hit@k / recall@k / MRR of the real `GET /memory/search` pipeline against a labeled fixture:
+
 ```bash
-cd benchmarks/longmemeval
-npm install
-# Requires: Postgres (pgvector) instance with populated memories, OpenAI API key
-node query-direct.js
-node evaluate.js
+# Requires a live API + Postgres + embedding provider (see docs/eval-harness.md)
+export BRAIN_API_KEY=...
+node api/scripts/eval/run-eval.js            # uses the bundled fixture
+node api/scripts/eval/run-eval.js my-fixture.json
 ```
+
+Use it to A/B any retrieval change (score floor, fusion weights, ef_search) before trusting it.
 
 ## About LongMemEval
 

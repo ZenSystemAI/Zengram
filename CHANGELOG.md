@@ -4,6 +4,60 @@ This changelog covers the entire Zengram project (API, MCP server, adapters, and
 
 This root file is the canonical changelog for the project. The `mcp-server/CHANGELOG.md` tracks only the published `@zensystemai/zengram-mcp` package history.
 
+## 4.4.0 (2026-07-03)
+
+Correctness + retrieval-quality release. Restores true multi-agent identity (the headline feature actually works again), overhauls the search ranking so hybrid fusion is used instead of discarded, fixes a cross-tenant supersede bug, and hardens the LLM/consolidation pipeline, temporal resolution, Docker deployment, and MCP surface. One breaking default for Gemini deployments — see Breaking.
+
+### Breaking
+- **Gemini embedding default dimensionality is now 1536** (Matryoshka truncation, matching what `.env.example` always documented) and truncated vectors are L2-renormalized. The old code default of 3072 also crashed at startup — pgvector's HNSW caps the `vector` type at 2000 dims. Existing Gemini deployments with a 3072-dim column must set `GEMINI_EMBEDDING_DIMS=3072` (now served by a halfvec-cast HNSW index) or re-embed. A new startup dims-guard fails fast with an actionable message when the column and provider disagree.
+- **Rolling multi-instance deploys**: the supersede advisory-lock key now includes `client_id`, so a v4.3 instance and a v4.4 instance do not serialize same-key writes against each other during the overlap window (two active rows for one key are possible under concurrent writes). Single-instance deployments — the normal docker-compose setup — are unaffected; multi-instance operators should briefly quiesce keyed fact/status writes during the rollout.
+
+### Multi-agent identity (restored)
+- **Writes honor the caller's validated `source_agent` again.** v4 coerced every write to a single canonical agent — which silently broke the product's core promise: briefings could not distinguish agents and corroboration could never fire. Each agent now writes under its own identity.
+- **Cross-agent corroboration is back**: a second agent storing identical content is recorded on the existing memory (`observed_by` append, capped at 20, `corroborated: true` in the response) instead of dropped as a duplicate.
+- The `brain_store` MCP tool's `source_agent` is optional and defaults from `BRAIN_MCP_SOURCE_AGENT` (set it per agent in multi-agent fleets); the schema/handler contract mismatch is fixed.
+
+### Retrieval & ranking
+- **Fusion is no longer discarded**: final ordering blends normalized RRF with vector similarity (`RANK_W_SIM`/`RANK_W_RRF`, new `services/ranking.js`, unit-tested) — a memory found by both paths genuinely outranks an equal-similarity single-path hit.
+- **Keyword-only results no longer get a fabricated 0.5 similarity** (and a genuine similarity of 0 is honored — the old `(score || 0.5)` treated it as missing).
+- **HNSW recall fix for scoped queries**: searches run with `SET LOCAL hnsw.ef_search` scaled to the fetch depth and, on pgvector ≥ 0.8, `hnsw.iterative_scan = relaxed_order` — sparse `client_id`-scoped tenants no longer get zero results from post-filter candidate exhaustion (capability probed once at init).
+- **Filter parity across paths**: keyword-sourced candidates are re-checked against `category`, `knowledge_category`, date-range, `at_time`, and active-state filters that previously only the vector path applied — and the `at_time` validity filter now runs before the result-limit trim, so filtered rows can't leave a response short.
+- The vector score floor is env-configurable (`SEARCH_SCORE_FLOOR`, default 0.55 ≈ cosine 0.1); the old hardcoded 0.3 equaled cosine −0.4 and filtered nothing.
+- The access-frequency boost is capped (`RANK_ACCESS_BOOST_CAP`, default 2.0), ending the popularity runaway where often-returned memories crowded out better matches.
+- Session-diversity reranking treats untagged results as singleton sessions competing at rank 0 instead of burying them below every tagged result; internal ranking fields no longer leak into API responses.
+- Multipath candidate depth raised (fetch cap 50 → 200), so `limit > 25` queries aren't silently truncated.
+- Keyword search uses `websearch_to_tsquery` (quoted phrases, negation, never throws on odd syntax); docs and comments stop calling `ts_rank_cd` "BM25".
+
+### Fixed
+- **Tenant isolation**: fact/status supersede lookups and the atomic supersede transaction are scoped by `client_id` (with `client_id` folded into the advisory-lock key) — one tenant's write can no longer deactivate another tenant's same-keyed fact. Mirror-table uniqueness is per-tenant too: `UNIQUE(key, client_id)` / `UNIQUE(subject, client_id)`, migrated idempotently.
+- **Temporal resolution is timezone-aware** (`BRAIN_TIMEZONE`, defaults to the server zone): "today"/"yesterday"/"this week" resolve to the correct civil day on non-UTC deployments, and "N months ago" no longer overflows day-of-month into inverted (empty) windows.
+- **LLM truncation is detected** on all four providers (typed `LlmTruncationError`) instead of surfacing as a JSON-parse failure that permanently retried the same oversized batch; default consolidation output budget raised to 8192 (`LLM_MAX_TOKENS`).
+- Contradiction resolution honors the LLM's `suggested_resolution` when deciding which memory to supersede, falling back to newer-wins; connection metadata accumulates across runs (deduped, capped 20) instead of being overwritten.
+- Gemini no-candidate and Anthropic empty-content responses throw descriptive errors instead of crashing; consolidation and reflect pass an explicit low temperature.
+- `batchUpdateEntityType` is a single collection-scoped UPDATE (was an N+1 read-modify-write loop that could clobber concurrent payload merges).
+- `KNOWN_SYSTEMS` entity matching uses word boundaries (no more substring false positives); entity merge/reclassify run in transactions.
+- `GET /briefing` and `GET /export` validate `since` as ISO 8601 (400 on garbage input).
+- The eval harness seeds through the (gated) import endpoint again — `operator_approved` was missing, so it 403'd on step one.
+
+### Added
+- Shared LLM retry helper: one exponential-backoff retry on 429/5xx/network errors, never on truncation or other 4xx (`LLM_RETRY_BASE_MS`).
+- Consolidation backlog cap per run (`CONSOLIDATION_MAX_MEMORIES`, default 500, oldest-first).
+- Deep health probe: `GET /health` checks Postgres and the embedding provider, returning 503 `{status:'degraded'}` on dependency loss.
+- MCP tool annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`title`) on all 13 tools; graceful stdio shutdown and a startup connectivity retry.
+- Eval harness reports hit@k, fraction recall@k, and MRR@k side by side; the bundled fixture grew to 34 memories / 12 queries with distractor clusters.
+- Postgres pool hygiene: explicit `max` (`PGPOOL_MAX`), idle/connection timeouts, and `statement_timeout` (`PG_STATEMENT_TIMEOUT_MS`) on both pools; the dedup index is now composite `(content_hash, client_id, type)`.
+
+### Security
+- Credential scrubbing covers Stripe, Google API, Slack, and standalone GitHub token formats.
+- `DELETE /collections/:name` (hard delete) requires `operator_approved=true`, matching the import gate.
+- `TRUST_PROXY` env drives Express `trust proxy` so the failed-auth IP throttle keys on real client IPs behind reverse proxies.
+- Docker hardening: `no-new-privileges` + `cap_drop: ALL` on both services (Postgres re-adds only its required caps), digest-pinned base image, `.dockerignore`, and a production override with read-only rootfs, tmpfs `/tmp`, and log rotation.
+- CI: `npm audit --audit-level=high` is now a blocking gate; tests run under a non-UTC timezone to catch civil-day regressions.
+
+### Docs
+- Removed stale single-operator framing from the auth docs (and internal deployment agent names from the public config doc); documented the ranking blend, new env vars, and the MCP `index` format + timeout/identity env vars.
+- `docs/benchmarks.md` no longer points at a non-existent reproduction directory: it now says plainly that the LongMemEval runner isn't in-repo yet and routes readers to the runnable eval harness.
+
 ## 4.3.0 (2026-06-13)
 
 Feature + hardening release. Adds agentic multi-hop retrieval (`brain_research`), grounds reflection answers with verifiable citations, and ports a set of generic safety/quality improvements from the production deployment. One behavior change to the destructive `/export/import` endpoint (now gated) — see Changed.

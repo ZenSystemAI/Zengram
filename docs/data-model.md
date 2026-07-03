@@ -107,9 +107,8 @@ Deduplication is tenant-scoped and runs at write time (not async). The process:
 1. Content is scrubbed of credentials
 2. SHA256 hash is computed and truncated to 16 hex characters
 3. The vector store is queried for existing points matching `content_hash` + `client_id` + `type` + `active: true`
-4. If a match is found, the existing memory is returned unchanged (`deduplicated: true`) — no second row is written.
-
-Each memory carries an `observed_by` array and an `observation_count`. In v4 every write is attributed to the canonical `source_agent: "claude-code"`, so `observed_by` is always `["claude-code"]` and the cross-agent corroboration path no longer fires (the dedup check returns the existing row without mutating it). The field and the `MAX_OBSERVED_BY = 20` cap remain in the schema for historical data and any future multi-writer setup.
+4. If a match is found from the **same agent**, the existing memory is returned unchanged (`deduplicated: true`) — no second row is written.
+5. If the match comes from a **different agent**, that's cross-agent corroboration: the new agent is appended to the existing memory's `observed_by` array (capped at `MAX_OBSERVED_BY = 20`), `observation_count` is bumped, and the response carries `corroborated: true`. Independent observation of the same fact by multiple agents is signal, not noise.
 
 ### Consolidation Dedup
 
@@ -199,41 +198,15 @@ This resets the decay clock. Frequently-accessed memories stay confident; forgot
 
 ## Search Scoring
 
-Final search ranking combines multiple signals:
+Final search ranking combines multiple signals (`api/src/services/ranking.js`):
 
 ### 1. Vector Similarity Score
 
-Cosine similarity from pgvector (0.0 to 1.0). A minimum threshold of 0.3 filters out irrelevant results.
+Similarity from pgvector on a `0.5 + cosine/2` scale (so 1.0 = identical, 0.5 = orthogonal). A minimum floor of `SEARCH_SCORE_FLOOR` (default 0.55 ≈ cosine 0.1) filters out irrelevant results. Results found only by the keyword path have no vector score and use the `RANK_KEYWORD_ONLY_SIM` stand-in (default 0.55).
 
-### 2. Confidence Decay
+### 2. RRF Fusion (Multi-Path)
 
-Applied as described above. Only affects facts and statuses.
-
-### 3. Access Boost
-
-```
-access_boost = 1 + (0.3 * log2(access_count + 1))
-```
-
-| Access Count | Boost Factor |
-|--------------|-------------|
-| 0 | 1.000 |
-| 1 | 1.300 |
-| 3 | 1.600 |
-| 7 | 1.900 |
-| 15 | 2.200 |
-
-### 4. Effective Score
-
-```
-effective_score = vector_score * effective_confidence * access_boost
-```
-
-Results are sorted by `effective_score` descending. In compact format, scores are rounded to 4 decimal places.
-
-### 5. RRF Fusion (Multi-Path)
-
-When multi-path retrieval is active (default), results from the vector and keyword searches are merged using Reciprocal Rank Fusion before confidence decay and access boost are applied.
+When multi-path retrieval is active (default), results from the vector and keyword searches are merged using Reciprocal Rank Fusion.
 
 **RRF Formula**: `rrf_score(d) = sum(1 / (k + rank))` across all ranked lists where `d` appears.
 
@@ -246,7 +219,37 @@ The two retrieval paths:
 | Path | Source | How It Ranks |
 |------|--------|-------------|
 | Vector | pgvector cosine similarity | By similarity score |
-| Keyword | Postgres `ts_rank_cd` | By BM25 text relevance |
+| Keyword | Postgres `ts_rank_cd` | By `ts_rank_cd` cover-density text relevance |
+
+### 3. Confidence Decay
+
+Applied as described above. Only affects facts and statuses.
+
+### 4. Access Boost (capped)
+
+```
+access_boost = min(1 + (0.3 * log2(access_count + 1)), RANK_ACCESS_BOOST_CAP)
+```
+
+| Access Count | Boost Factor |
+|--------------|-------------|
+| 0 | 1.000 |
+| 1 | 1.300 |
+| 3 | 1.600 |
+| 7 | 1.900 |
+| 15+ | 2.000 (cap, `RANK_ACCESS_BOOST_CAP` default) |
+
+The cap prevents a popularity runaway: without it, frequently-returned memories kept boosting themselves above better matches.
+
+### 5. Effective Score
+
+```
+blended = RANK_W_SIM * similarity + RANK_W_RRF * (rrf_score / max_rrf_in_set)   # multi-path
+blended = similarity                                                            # single-path
+effective_score = blended * effective_confidence * access_boost * temporal_boost * importance_weight
+```
+
+Importance weights: critical 1.0, high 0.85, medium 0.7, low 0.5. The temporal-proximity boost applies only on temporal queries. Results are sorted by `effective_score` descending, then session-diversified (round-robin across sessions; untagged results compete at rank 0). In compact format, scores are rounded to 4 decimal places.
 
 ## Entity Extraction
 
@@ -328,7 +331,7 @@ Relationships have a `strength` counter that increments each time the relationsh
 
 ### Graph search (retired in v4)
 
-Earlier versions ran a third retrieval path — BFS spreading activation across the entity graph — fused alongside vector and keyword search. It was removed in v4: at the current corpus scale, vector + BM25 already surfaced everything the graph path contributed, and the traversal added complexity without a measurable retrieval lift. The `entity_relationships` table and its `strength` counter are still populated at write time and exposed through the entity endpoints, but they no longer drive search.
+Earlier versions ran a third retrieval path — BFS spreading activation across the entity graph — fused alongside vector and keyword search. It was removed in v4: at the current corpus scale, vector + full-text already surfaced everything the graph path contributed, and the traversal added complexity without a measurable retrieval lift. The `entity_relationships` table and its `strength` counter are still populated at write time and exposed through the entity endpoints, but they no longer drive search.
 
 ## Consolidation Pipeline
 

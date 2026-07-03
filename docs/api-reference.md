@@ -10,7 +10,7 @@ All endpoints except `/health` require the `x-api-key` header.
 x-api-key: <BRAIN_API_KEY>
 ```
 
-A single admin key (`BRAIN_API_KEY`) authenticates every caller — full access, no agent identity binding. Per-agent keys were retired in v4; all writes are attributed to `source_agent: "claude-code"`.
+A single admin key (`BRAIN_API_KEY`) authenticates every caller — full access. Agent identity is declarative: every write carries a caller-supplied `source_agent` (validated, 1-64 chars) that attributes the memory to a specific agent. Briefings, filters, and cross-agent corroboration all key off this identity, so give each agent in your fleet its own stable name. The key does not bind identity — any caller with the key can write as any agent (scoped per-agent keys are on the roadmap).
 
 All responses include an `x-request-id` header (pass your own via the request header or one is generated).
 

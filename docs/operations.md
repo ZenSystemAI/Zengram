@@ -256,7 +256,7 @@ All log lines use bracketed prefixes for grep-friendly filtering:
 | `[memory:delete]` | DELETE /memory/:id |
 | `[consolidation]` | Consolidation engine runs |
 | `[entities]` | Entity extraction and alias cache |
-| `[keyword-search]` | BM25 keyword search |
+| `[keyword-search]` | Keyword (full-text) search |
 | `[collections]` | Multi-collection management |
 | `[reflect]` | LLM reflection |
 
