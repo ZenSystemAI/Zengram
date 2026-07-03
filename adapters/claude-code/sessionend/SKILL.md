@@ -63,11 +63,11 @@ Be specific. "Everything went fine" is not a useful reflection. If something was
 
 ## Step 3 — Store to Zengram
 
-Call `brain_store` with a structured session summary. Use this format:
+Call `brain_store` with a structured session summary. `brain_store` has no
+`topic` field — the session identifier lives in the content heading (and the
+`client_id` when the work was client-scoped). Use this format:
 
 ```
-topic: session-reflection/{project-name}/{YYYY-MM-DD}
-
 content:
 ## Session: {project} — {date}
 
@@ -243,36 +243,29 @@ Keep it brief. The user is signing off — they don't need a wall of text.
 Use this as the bar for quality. This is a real example of what a properly done session-end should produce:
 
 ```
-topic: session-reflection/shared-brain/2026-03-20
-
 content:
-## Session: shared-brain — 2026-03-20
+## Session: shared-brain — 2026-07-03
 
 ### What was accomplished
-- Shipped Shared Brain v2.0.0: client knowledge base, import/export, webhook notifications, entity relationship graph
-- Added 4 new MCP tools (brain_client, brain_export, brain_import, brain_graph)
-- Built D3.js interactive entity visualization
-- 34 files changed, 4,619 lines added
+- Shipped Zengram v4.4.0 MCP surface: annotations on all 13 tools, optional per-agent source_agent, stdio graceful shutdown + startup retry
+- Raised the engines.node floor to >=20.10.0 for the JSON import attributes in the entrypoint
+- Added a pure annotations/engines unit test; all API tests still green
 
 ### What went well
-- Architecture decisions from v1.5 carried forward cleanly — access-weighted search, consolidated facts pattern
-- Entity extraction backfill worked on first try (303 entities from 247 memories)
-- Client fingerprint matching solved the "which client is this about" problem elegantly
+- pgvector RRF ranking carried forward cleanly — effective_score = blended fusion × confidence × access × importance
+- Import-side of the module was already side-effect-free once the stdio start was guarded, so annotations became unit-testable with no live Postgres
 
 ### What went wrong
-- Spent 40 minutes debugging Qdrant filter syntax for the new knowledge_category field — should have checked Qdrant docs first instead of guessing
-- First attempt at brain_graph returned circular references because co-occurrence tracking didn't exclude self-references
-- Forgot to update the MCP server tool count in the npm package description (still says 6, should be 11)
+- Initially left source_agent in the brain_store required[] while the handler silently defaulted it — the schema and handler disagreed for a full session
+- Spent time confirming the SDK already supported tool annotations before realizing no upgrade was needed (1.27.x)
 
 ### How to improve
-- Before adding new Qdrant filter fields, always check the Qdrant payload indexing docs first
-- When adding new tools to MCP server, add a checklist item to update package.json description
-- Graph queries need cycle detection — add to standard testing checklist
+- When a handler defaults a field, the inputSchema must not mark it required — check both sides in the same pass
+- Before proposing an SDK bump, grep the installed types for the feature first
 
 ### Cross-agent relevant
-- brain_client tool now available — Neo and n8n can get full client briefings in one call
-- Entity graph API at GET /memory/graph — useful for any agent that needs relationship context
-- Webhook notifications now fire on store/supersede/delete — n8n workflows can react in real-time
+- brain_store now honors BRAIN_MCP_SOURCE_AGENT — every fleet agent (claude, neo, sparx, alfred, codex) should set it so writes attribute correctly
+- Read-only vs destructive tool annotations are now published — MCP clients can gate delete/import behind confirmation
 ```
 
-**Why this is good:** Specific outcomes with numbers. Honest about wrong turns (40 minutes on Qdrant filters). Improvement items are actionable and future-facing. Cross-agent section only includes things other agents genuinely need.
+**Why this is good:** Specific outcomes with the real v4 surface (13 tools, pgvector). Honest about the schema/handler mismatch. Improvement items are actionable and future-facing. Cross-agent section only includes things other agents genuinely need.

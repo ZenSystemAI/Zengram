@@ -5,17 +5,17 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
 
 const API_URL = process.env.BRAIN_API_URL || 'http://localhost:8084';
 const API_KEY = process.env.BRAIN_API_KEY;
 const DEFAULT_TIMEOUT = parseInt(process.env.BRAIN_MCP_TIMEOUT) || 15000;
 const CONSOLIDATION_TIMEOUT = parseInt(process.env.BRAIN_MCP_CONSOLIDATION_TIMEOUT) || 120000;
-
-if (!API_KEY) {
-  console.error('[mcp] BRAIN_API_KEY environment variable is required');
-  process.exit(1);
-}
+// Fleet identity: each agent sets BRAIN_MCP_SOURCE_AGENT so its writes are
+// correctly attributed (cross-agent corroboration + briefings depend on it).
+const DEFAULT_SOURCE_AGENT = process.env.BRAIN_MCP_SOURCE_AGENT || 'claude-code';
 
 async function apiRequest(path, options = {}) {
   const url = `${API_URL}${path}`;
@@ -52,11 +52,13 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+// Tool definitions live at module scope (exported) so annotations can be
+// unit-tested without starting the stdio transport.
+export const TOOLS = [
     {
       name: 'brain_store',
-      description: 'Store a memory in the Shared Brain. Use this to record events (something happened), facts (persistent knowledge), decisions (choices made and why), or status updates (current state of systems/workflows). All agents share this memory. Duplicate content is automatically detected and deduplicated. Facts and statuses with matching keys/subjects automatically supersede older versions.',
+      annotations: { title: 'Store memory', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      description: 'Store a memory in the Shared Brain. Use this to record events (something happened), facts (persistent knowledge), decisions (choices made and why), or status updates (current state of systems/workflows). All agents share this memory. Duplicate content is automatically detected and deduplicated. Facts and statuses with matching keys/subjects automatically supersede older versions. source_agent is optional and defaults to BRAIN_MCP_SOURCE_AGENT (then "claude-code"); multi-agent fleets should set BRAIN_MCP_SOURCE_AGENT per agent so writes are correctly attributed.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -71,7 +73,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           source_agent: {
             type: 'string',
-            description: 'Identifier for the agent storing this memory (e.g. "claude-code", "my-agent", "n8n")',
+            description: 'Optional identifier for the agent storing this memory (e.g. "claude-code", "my-agent", "n8n"). Defaults to the BRAIN_MCP_SOURCE_AGENT env var, then "claude-code". Multi-agent fleets should set BRAIN_MCP_SOURCE_AGENT per agent rather than passing this each call.',
           },
           client_id: {
             type: 'string',
@@ -113,12 +115,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'For facts/statuses: ISO 8601 timestamp when this fact stopped being true. Null means still valid. Auto-set when superseded.',
           },
         },
-        required: ['type', 'content', 'source_agent'],
+        required: ['type', 'content'],
       },
     },
     {
       name: 'brain_search',
-      description: 'Multi-path search across all shared memories. Uses vector (semantic), keyword (BM25 exact match), and graph (entity relationship BFS) retrieval in parallel, merged with Reciprocal Rank Fusion. Returns compact format by default to save tokens. Use format="full" to see which retrieval paths contributed to each result.',
+      annotations: { title: 'Search memories', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      description: 'Multi-path search across all shared memories. Runs vector (semantic) and full-text keyword retrieval in parallel, merged with Reciprocal Rank Fusion into a blended ranking. Returns compact format by default to save tokens. Use format="full" to see which retrieval paths contributed to each result.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -167,6 +170,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_briefing',
+      annotations: { title: 'Session briefing', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Get a session briefing: what happened since a given time across all agents. Excludes entries from the requesting agent by default. Returns compact format (truncated content) to save tokens — use format="full" only when you need complete content.',
       inputSchema: {
         type: 'object',
@@ -199,6 +203,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_query',
+      annotations: { title: 'Structured query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Structured query of shared memories via the database. Query facts by key, statuses by subject, or events by time range. Use brain_search for semantic queries instead.',
       inputSchema: {
         type: 'object',
@@ -220,6 +225,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_stats',
+      annotations: { title: 'Memory health stats', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Get memory health stats: total memories, active vs superseded, consolidated, decayed, breakdown by type. Use this to understand the state of the shared brain.',
       inputSchema: {
         type: 'object',
@@ -228,6 +234,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_consolidate',
+      annotations: { title: 'Consolidate memories', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description: 'Trigger a memory consolidation run. An LLM analyzes unconsolidated memories to find duplicates to merge, contradictions to flag, connections between memories, and cross-memory insights. Runs automatically on a schedule, but can be triggered manually. Default action "run" is async (returns a job_id you can poll with action="job"). Pass sync=true to block until consolidation completes.',
       inputSchema: {
         type: 'object',
@@ -250,6 +257,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_entities',
+      annotations: { title: 'Query entity graph', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Query the entity graph. Entities are automatically extracted from memories — clients, people, technologies, workflows, domains, agents. Use this to find all entities, get details about one, or list all memories linked to an entity.',
       inputSchema: {
         type: 'object',
@@ -278,6 +286,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_delete',
+      annotations: { title: 'Delete memory', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: 'Soft-delete a memory by ID (marks it inactive). The memory remains in storage but is excluded from search results. Agent-scoped keys can only delete their own memories. Use this for compliance or to remove incorrect/sensitive memories.',
       inputSchema: {
         type: 'object',
@@ -296,6 +305,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_update',
+      annotations: { title: 'Update memory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Update an existing memory\'s content, importance, or category without creating a new version. Re-embeds and re-indexes if content changes. Agents can only update their own memories.',
       inputSchema: {
         type: 'object',
@@ -328,6 +338,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_export',
+      annotations: { title: 'Export memories', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Export shared memories as JSON for backup or migration. Returns memory payloads (no vectors). WARNING: Can return very large responses — use limit, client_id, type, or since filters to avoid exceeding MCP message size limits. Default limit is 500.',
       inputSchema: {
         type: 'object',
@@ -341,6 +352,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_import',
+      annotations: { title: 'Import memories', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
       description: 'Operator-only: import memories from JSON (e.g. from a brain_export backup). Mutates the memory store, re-embeds with current provider, and deduplicates by content hash. Requires operator_approved=true. Max 500 records per call.',
       inputSchema: {
         type: 'object',
@@ -356,6 +368,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_reflect',
+      annotations: { title: 'Reflect on a topic', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Reflect on a topic by synthesizing patterns across stored memories. Searches relevant memories using multi-path retrieval, then uses LLM to analyze and produce insights about patterns, timeline evolution, contradictions, and knowledge gaps. Use this for "what do we know about X?", "what patterns do you see?", or "what\'s missing?"',
       inputSchema: {
         type: 'object',
@@ -378,6 +391,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'brain_research',
+      annotations: { title: 'Multi-hop research', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Agentic, iterate-until-sufficient retrieval for HARD MULTI-HOP questions only (e.g. "find the decision that superseded X, then what status it left Y in"). Runs a loop: retrieve -> judge whether the gathered memories actually answer the question -> if not, search the named gap -> repeat (bounded) -> synthesize a grounded answer with per-claim [mem:<id>] citations. Heavyweight (several LLM calls, rate-limited) and OFF by default (server must set RESEARCH_ENABLED=true). Do NOT use for routine recall — use brain_search for that, or brain_reflect for one-shot pattern synthesis. Returns answer, key_findings, cited_memory_ids, unresolved, and partial=true if it could not fully resolve within the iteration budget.',
       inputSchema: {
         type: 'object',
@@ -398,8 +412,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['topic'],
       },
     },
-  ],
-}));
+];
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -420,7 +435,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           body: JSON.stringify({
             type: args.type,
             content: args.content,
-            source_agent: args.source_agent || 'claude-code',
+            source_agent: args.source_agent || DEFAULT_SOURCE_AGENT,
             client_id: args.client_id,
             category: args.category,
             importance: args.importance,
@@ -609,10 +624,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+// Probe the API before serving. Read-only /health; never write to stdout here —
+// stdout carries the JSON-RPC stream and stray bytes corrupt it.
+async function checkConnectivity() {
+  await apiRequest('/health');
+}
+
 async function main() {
+  if (!API_KEY) {
+    console.error('[zengram-mcp] BRAIN_API_KEY environment variable is required');
+    process.exit(1);
+  }
+
+  // Single 1s-delayed retry so a briefly-unready API (e.g. still booting) does
+  // not need a full MCP-client restart. Non-fatal: start anyway so tool calls
+  // surface a clear error rather than the server refusing to come up.
+  try {
+    await checkConnectivity();
+  } catch (err) {
+    console.error(`[zengram-mcp] API connectivity check failed (${err.message}); retrying in 1s`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      await checkConnectivity();
+    } catch (err2) {
+      console.error(`[zengram-mcp] API still unreachable (${err2.message}); starting anyway — tool calls will error until the API is up`);
+    }
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[zengram-mcp] Connected');
+
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`[zengram-mcp] Received ${signal}, closing transport`);
+    try {
+      await server.close();
+    } catch (err) {
+      console.error(`[zengram-mcp] Error during shutdown: ${err.message}`);
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main().catch(console.error);
+// Only auto-start the stdio server when run directly (bin / node src/index.js).
+// realpathSync resolves the global-install symlink so importing this module for
+// tests does not spin up the transport.
+const invokedDirectly = process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+
+if (invokedDirectly) {
+  main().catch(console.error);
+}

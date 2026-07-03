@@ -96,10 +96,12 @@ class BrainClient:
         include_superseded: bool = False,
     ) -> dict:
         """
-        Semantic search across all memories.
+        Multi-path search across all memories.
 
-        The query is embedded and compared against stored memory vectors.
-        Results are ranked by similarity * confidence.
+        The query runs vector (semantic) + full-text keyword retrieval in parallel,
+        fused with Reciprocal Rank Fusion. Results are ranked by a blended
+        score: fusion x confidence (decays over time) x access boost x
+        importance weight.
 
         Returns:
             Dict with 'query', 'count', and 'results' list.

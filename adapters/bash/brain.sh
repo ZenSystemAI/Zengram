@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This adapter wraps 6 of the 13 Zengram tools (store, search, briefing, query,
+# stats, consolidate). The other 7 (entities, delete, update, export, import,
+# reflect, research) are reachable directly over REST with curl — see
+# examples/curl-demo.sh. Reach for curl rather than adding new subcommands here.
+
 # === Config ===
 API_URL="${BRAIN_API_URL:-http://localhost:8084}"
 SOURCE_AGENT="${BRAIN_AGENT_NAME:-my-agent}"

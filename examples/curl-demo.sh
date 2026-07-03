@@ -125,8 +125,9 @@ curl -s -X POST "${API_URL}/memory" \
 # ---------------------------------------------------------------------------
 section "Search: Semantic (vector similarity)"
 
-# Search queries are embedded and compared against stored memories.
-# Results are ranked by similarity * confidence (confidence decays over time).
+# Search runs multi-path retrieval (vector + full-text, fused with RRF). Results are
+# ranked by a blended score: fusion x confidence (decays over time) x access
+# boost x importance weight.
 curl -s "${API_URL}/memory/search?q=database+setup&client_id=acme-corp&limit=5" \
   -H "${header_auth}" | jq .
 

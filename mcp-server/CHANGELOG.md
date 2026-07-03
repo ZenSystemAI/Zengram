@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.4.0 (2026-07-03)
+
+- **MCP tool annotations** on all 13 tools (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint: false`) so clients can render and gate them by behaviour — read-only (search/query/briefing/stats/entities/export/reflect/research), non-destructive writes (store/update), destructive (delete/import), and non-idempotent (consolidate).
+- **`source_agent` is now optional on `brain_store`.** It defaults to the new `BRAIN_MCP_SOURCE_AGENT` env var (then `claude-code`). Multi-agent fleets should set `BRAIN_MCP_SOURCE_AGENT` per agent so writes are correctly attributed — cross-agent corroboration and briefings depend on it.
+- **Stdio robustness:** graceful shutdown on `SIGINT`/`SIGTERM` (closes the transport) and a single 1s-delayed retry of the startup API connectivity check, with diagnostics on stderr only (never stdout — it carries the JSON-RPC stream).
+- **`engines.node` floor raised to `>=20.10.0`** — the JSON import attributes (`with { type: 'json' }`) used by the entrypoint are a `SyntaxError` on older Node.
+- Docs: `npx -y @zensystemai/zengram-mcp` config example, documented the `index` search format and the `BRAIN_MCP_TIMEOUT` / `BRAIN_MCP_CONSOLIDATION_TIMEOUT` / `BRAIN_MCP_SOURCE_AGENT` env vars.
+
 ## 4.3.0 (2026-06-13)
 
 - **New tool `brain_research`** — agentic, iterate-until-sufficient retrieval for hard multi-hop questions. Runs a bounded retrieve → judge-sufficiency → requery-the-gap loop and returns a grounded answer with per-claim `[mem:<id>]` citations plus a `partial` flag. Requires the API server to set `RESEARCH_ENABLED=true`; heavyweight and rate-limited — do not use for routine recall (use `brain_search`, or `brain_reflect` for one-shot synthesis). 13 tools total.

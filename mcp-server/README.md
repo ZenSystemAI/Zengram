@@ -37,6 +37,25 @@ npm install -g @zensystemai/zengram-mcp
 }
 ```
 
+### Without a global install (`npx`)
+
+Skip `npm install -g` and let the MCP client fetch the package on demand:
+
+```json
+{
+  "mcpServers": {
+    "zengram": {
+      "command": "npx",
+      "args": ["-y", "@zensystemai/zengram-mcp"],
+      "env": {
+        "BRAIN_API_URL": "http://localhost:8084",
+        "BRAIN_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
 ### Cursor / Windsurf (`mcp.json`)
 
 ```json
@@ -59,13 +78,16 @@ npm install -g @zensystemai/zengram-mcp
 |----------|:--------:|-------------|
 | `BRAIN_API_KEY` | Yes | API key set in your `.env` |
 | `BRAIN_API_URL` | No | API URL. Default: `http://localhost:8084` |
+| `BRAIN_MCP_SOURCE_AGENT` | No | Default `source_agent` stamped on `brain_store` writes. Default: `claude-code`. Set this per agent in multi-agent fleets so writes are correctly attributed — cross-agent corroboration and briefings depend on it. |
+| `BRAIN_MCP_TIMEOUT` | No | Timeout (ms) for standard API calls. Default: `15000`. |
+| `BRAIN_MCP_CONSOLIDATION_TIMEOUT` | No | Timeout (ms) for long-running calls (consolidation, reflect, research). Default: `120000`. |
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
 | `brain_store` | Store a memory (event, fact, decision, or status). Entities are automatically extracted. |
-| `brain_search` | Multi-path search (vector + BM25, fused with RRF) across all memories. |
+| `brain_search` | Multi-path search (vector + full-text, fused with RRF) across all memories. |
 | `brain_briefing` | Session briefing — what happened since a given time. |
 | `brain_query` | Structured query by type, key, subject, or time range. |
 | `brain_stats` | Memory health stats (totals, active, decayed/superseded, by type). |
@@ -102,7 +124,13 @@ Stores a fact that any other agent can retrieve. Entities like "acme-corp" (clie
 brain_search query="deployment issues" limit=5
 ```
 
-Multi-path search (vector similarity + BM25 keyword, fused with RRF) across all memories. To scope results to a single entity, use `brain_entities action="memories"` (below).
+Multi-path search (vector similarity + full-text keyword, fused with RRF) across all memories. To scope results to a single entity, use `brain_entities action="memories"` (below).
+
+The `format` parameter controls response verbosity: `compact` (default, content truncated to 200 chars), `full` (complete content + `retrieval_sources`), and `index` (minimal tokens — ID + 80-char summary + score + type only). Use `index` for progressive disclosure: run a cheap `index` scan first, then fetch the full content of only the memories you need in a second `full` call.
+
+```
+brain_search query="deployment issues" format="index" limit=20
+```
 
 ### Query entities
 

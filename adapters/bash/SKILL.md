@@ -2,6 +2,8 @@
 
 Command-line interface for the Zengram system. Use this to store, search, and retrieve shared memories from any terminal-based agent or script.
 
+> This adapter covers 6 of the 13 Zengram tools (store, search, briefing, query, stats, consolidate). The remaining 7 (entities, delete, update, export, import, reflect, research) are reachable directly over REST with `curl` — see `examples/curl-demo.sh`. Prefer curl over adding new subcommands here.
+
 ## Requirements
 
 - `curl` and `jq` must be installed
@@ -12,7 +14,7 @@ Command-line interface for the Zengram system. Use this to store, search, and re
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAIN_API_URL` | `http://localhost:8084` | API server URL |
-| `BRAIN_AGENT_NAME` | `my-agent` | Self-exclusion filter for `briefing` only. NOT persisted: v4 attributes every write to the canonical `source_agent: "claude-code"` server-side. |
+| `BRAIN_AGENT_NAME` | `my-agent` | Persisted as every write's `source_agent` AND used as the `briefing` self-exclusion filter. Set a stable, unique name per agent — briefings, filters, and cross-agent corroboration key off it. |
 | `BRAIN_API_KEY` | *(required)* | API key for authentication |
 | `BRAIN_ENV_FILE` | `$HOME/.config/zengram/.env` | Path to env file |
 
