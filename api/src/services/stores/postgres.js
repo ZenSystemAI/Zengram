@@ -7,7 +7,13 @@ export class PostgresStore {
   }
 
   async init() {
-    this.pool = new pg.Pool({ connectionString: this.url });
+    this.pool = new pg.Pool({
+      connectionString: this.url,
+      max: parseInt(process.env.PGPOOL_MAX) || 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+      statement_timeout: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS) || 30000,
+    });
     this.pool.on('error', (err) => console.error('[postgres] Idle client error:', err.message));
 
     // Create tables
@@ -27,7 +33,7 @@ export class PostgresStore {
 
       CREATE TABLE IF NOT EXISTS facts (
         id SERIAL PRIMARY KEY,
-        key TEXT UNIQUE NOT NULL,
+        key TEXT NOT NULL,
         value TEXT NOT NULL,
         content TEXT,
         source_agent TEXT,
@@ -42,7 +48,7 @@ export class PostgresStore {
 
       CREATE TABLE IF NOT EXISTS statuses (
         id SERIAL PRIMARY KEY,
-        subject TEXT UNIQUE NOT NULL,
+        subject TEXT NOT NULL,
         status TEXT NOT NULL,
         source_agent TEXT,
         client_id TEXT DEFAULT 'global',
@@ -68,6 +74,23 @@ export class PostgresStore {
     for (const table of ['events', 'facts', 'statuses']) {
       await this.pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS knowledge_category TEXT DEFAULT 'general'`);
     }
+
+    // Tenant-scope the mirror-table uniqueness: key/subject are only unique per
+    // client_id, not globally. Drop the legacy single-column constraints (the
+    // inline-UNIQUE auto-names from older deployments) and add composite ones.
+    // Idempotent: DROP ... IF EXISTS, and ADD wrapped in a duplicate-tolerant DO block.
+    await this.pool.query('ALTER TABLE facts DROP CONSTRAINT IF EXISTS facts_key_key');
+    await this.pool.query('ALTER TABLE statuses DROP CONSTRAINT IF EXISTS statuses_subject_key');
+    await this.pool.query(`
+      DO $$ BEGIN
+        ALTER TABLE facts ADD CONSTRAINT facts_key_client_uniq UNIQUE (key, client_id);
+      EXCEPTION WHEN duplicate_table THEN NULL; WHEN duplicate_object THEN NULL;
+      END $$;
+      DO $$ BEGIN
+        ALTER TABLE statuses ADD CONSTRAINT statuses_subject_client_uniq UNIQUE (subject, client_id);
+      EXCEPTION WHEN duplicate_table THEN NULL; WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS entities (
@@ -116,7 +139,7 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_entity_id);
     `);
 
-    // Keyword search table (BM25 via tsvector)
+    // Keyword search table (full-text via tsvector)
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS memory_search (
         memory_id TEXT PRIMARY KEY,
@@ -194,7 +217,7 @@ export class PostgresStore {
     const result = await this.pool.query(
       `INSERT INTO facts (key, value, content, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       ON CONFLICT (key) DO UPDATE SET
+       ON CONFLICT (key, client_id) DO UPDATE SET
          value = EXCLUDED.value, content = EXCLUDED.content, source_agent = EXCLUDED.source_agent,
          client_id = EXCLUDED.client_id, category = EXCLUDED.category, importance = EXCLUDED.importance,
          knowledge_category = EXCLUDED.knowledge_category, content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at
@@ -228,7 +251,7 @@ export class PostgresStore {
     const result = await this.pool.query(
       `INSERT INTO statuses (subject, status, source_agent, client_id, category, importance, knowledge_category, content_hash, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (subject) DO UPDATE SET
+       ON CONFLICT (subject, client_id) DO UPDATE SET
          status = EXCLUDED.status, source_agent = EXCLUDED.source_agent,
          client_id = EXCLUDED.client_id, category = EXCLUDED.category, importance = EXCLUDED.importance,
          knowledge_category = EXCLUDED.knowledge_category, content_hash = EXCLUDED.content_hash, updated_at = EXCLUDED.updated_at

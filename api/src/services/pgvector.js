@@ -13,12 +13,86 @@ const POSTGRES_URL = process.env.POSTGRES_URL;
 const DECAY_FACTOR = parseFloat(process.env.DECAY_FACTOR) || 0.98;
 const DECAY_TYPES = ['fact', 'status'];
 
+// Score floor on the 1-(distance/2) scale. score = 0.5 + cosine_sim/2, so the
+// default 0.55 ≈ cosine 0.1. The old hardcoded 0.3 == cosine -0.4 and filtered
+// nothing. parseFloat-with-guard so an explicit 0 isn't swallowed by `|| 0.55`.
+const SEARCH_SCORE_FLOOR = (() => {
+  const raw = parseFloat(process.env.SEARCH_SCORE_FLOOR);
+  return Number.isFinite(raw) ? raw : 0.55;
+})();
+
+// pgvector's HNSW caps the `vector` type at 2000 dims — above that we index and
+// query through a halfvec cast. Both are resolved once at init from the provider
+// dims and cached module-level so the search path stays allocation-free.
+const HNSW_VECTOR_DIM_CAP = 2000;
+
 let pool = null;
+// Set at init: 'vector' (≤2000 dims) or 'halfvec' (>2000 dims), and the dims.
+let vectorMode = 'vector';
+let vectorDims = null;
+// Whether the installed pgvector supports iterative_scan (>= 0.8).
+let iterativeScanSupported = false;
+
+// --- Pure helpers (exported for unit tests) ---
+
+// Parse a pgvector extversion string ('0.8.0', '0.7.4') to { major, minor }.
+// Returns null on anything unparseable so callers fall back to conservative defaults.
+export function parseVectorVersion(extversion) {
+  if (typeof extversion !== 'string') return null;
+  const m = extversion.trim().match(/^(\d+)\.(\d+)/);
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]) };
+}
+
+// iterative_scan (relaxed_order) landed in pgvector 0.8.0.
+export function supportsIterativeScan(version) {
+  if (!version) return false;
+  return version.major > 0 || (version.major === 0 && version.minor >= 8);
+}
+
+// ef_search clamp for a given result limit: enough candidates to survive
+// client_id post-filtering without collapsing recall on sparse tenants, capped
+// so a huge limit can't blow up query latency.
+export function clampEfSearch(limit) {
+  const n = Number.isFinite(limit) ? Math.floor(limit) : 10;
+  return Math.max(40, Math.min(n * 2, 400));
+}
+
+// Whether >2000-dim vectors force the halfvec code path.
+export function halfvecMode(dims) {
+  return dims > HNSW_VECTOR_DIM_CAP ? 'halfvec' : 'vector';
+}
+
+// SQL distance expression for the active vector mode. In halfvec mode both the
+// stored column and the query param are cast to halfvec(dims) so the operator
+// matches the halfvec HNSW index.
+export function vectorDistanceExpr(mode, dims, param = '$1') {
+  if (mode === 'halfvec') {
+    return `(vector::halfvec(${dims})) <=> ${param}::halfvec(${dims})`;
+  }
+  return `vector <=> ${param}::vector`;
+}
+
+// Startup dims-guard decision: does the existing vector column's declared
+// dimension conflict with the provider's dims? atttypmod is the declared N for
+// vector(N); -1 (or null) means unspecified/unknown, which we can't validate.
+export function dimsGuardShouldExit(atttypmod, providerDims) {
+  if (atttypmod == null || atttypmod < 0) return false;
+  return atttypmod !== providerDims;
+}
 
 export async function initPgvector() {
   const dims = getEmbeddingDimensions();
+  vectorDims = dims;
+  vectorMode = halfvecMode(dims);
 
-  pool = new pg.Pool({ connectionString: POSTGRES_URL });
+  pool = new pg.Pool({
+    connectionString: POSTGRES_URL,
+    max: parseInt(process.env.PGPOOL_MAX) || 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+    statement_timeout: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS) || 30000,
+  });
   pool.on('error', (err) => console.error('[pgvector] Idle client error:', err.message));
 
   // Register the pgvector type as array-of-float so values round-trip cleanly.
@@ -27,6 +101,12 @@ export async function initPgvector() {
 
   // Create extension + table (idempotent)
   await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+
+  // Capability probe — cache the installed pgvector version once so searchPoints
+  // knows whether it can enable iterative_scan (relaxed_order), which needs 0.8+.
+  const verRes = await pool.query("SELECT extversion FROM pg_extension WHERE extname = 'vector'");
+  const pgvectorVersion = parseVectorVersion(verRes.rows[0]?.extversion);
+  iterativeScanSupported = supportsIterativeScan(pgvectorVersion);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -50,13 +130,38 @@ export async function initPgvector() {
     )
   `);
 
+  // Dims guard — if the table pre-exists with a vector column of a different
+  // declared dimension than the provider now reports, every write would fail
+  // with an opaque dimension-mismatch. Fail fast at startup with a fix instead.
+  const colRes = await pool.query(
+    `SELECT atttypmod FROM pg_attribute
+       WHERE attrelid = 'memories'::regclass AND attname = 'vector'`
+  );
+  const atttypmod = colRes.rows[0]?.atttypmod;
+  if (dimsGuardShouldExit(atttypmod, dims)) {
+    throw new Error(
+      `[pgvector] FATAL: existing 'memories.vector' column is vector(${atttypmod}) but the ` +
+      `embedding provider reports ${dims} dims. Fix the mismatch: set the provider's dims env ` +
+      `(e.g. GEMINI_EMBEDDING_DIMS/OPENAI_EMBEDDING_DIMS) back to ${atttypmod}, or re-embed the ` +
+      `corpus into a fresh column at ${dims} dims. Refusing to start with a column that would ` +
+      `reject every write.`
+    );
+  }
+
   // Indexes — HNSW for vector ANN, btree for hot-path filters, GIN for JSONB entity filter.
   // HNSW creation is idempotent via IF NOT EXISTS but takes a moment on first create.
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_vector_hnsw ON memories USING hnsw (vector vector_cosine_ops)`);
+  // >2000 dims exceeds the `vector`-type HNSW cap, so index the halfvec cast instead.
+  if (vectorMode === 'halfvec') {
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_vector_hnsw ON memories USING hnsw ((vector::halfvec(${dims})) halfvec_cosine_ops)`);
+  } else {
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_vector_hnsw ON memories USING hnsw (vector vector_cosine_ops)`);
+  }
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type) WHERE active = true`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_source_agent ON memories(source_agent) WHERE active = true`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_client_id ON memories(client_id) WHERE active = true`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash)`);
+  // Dedup lookup is (content_hash, client_id, type) — composite matches it; drop the old single-column index.
+  await pool.query(`DROP INDEX IF EXISTS idx_memories_content_hash`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_content_hash_dedup ON memories(content_hash, client_id, type)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key) WHERE key IS NOT NULL`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(subject) WHERE subject IS NOT NULL`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC)`);
@@ -64,7 +169,10 @@ export async function initPgvector() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_payload_entities ON memories USING GIN ((payload -> 'entities'))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_collection ON memories(collection)`);
 
-  console.log(`[pgvector] Table 'memories' ready (vector dims: ${dims})`);
+  console.log(
+    `[pgvector] Table 'memories' ready (vector dims: ${dims}, mode: ${vectorMode}, ` +
+    `pgvector: ${verRes.rows[0]?.extversion || 'unknown'}, iterative_scan: ${iterativeScanSupported ? 'relaxed_order' : 'off'})`
+  );
 }
 
 // Register the vector OID so parameter binding works with float[] input.
@@ -145,17 +253,25 @@ export async function supersedeAndInsert(keyField, keyValue, newId, vector, payl
   const col = collection || 'shared_memories';
   const vecLit = toVectorLiteral(vector);
   const column = keyField === 'key' ? 'key' : 'subject';
+  // Supersede is per-tenant: a fact/status write must only deactivate the prior
+  // active row for the SAME client_id, otherwise one tenant's write silently
+  // deactivates another tenant's same-keyed row. Also fold client_id into the
+  // advisory-lock key so different tenants don't serialize on each other.
+  const clientId = payload.client_id || 'global';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Serialize concurrent writers for this exact key/subject value.
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [keyField, keyValue]);
+    // Serialize concurrent writers for this exact key/subject value within one tenant.
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+      [`${keyField}:${clientId}`, keyValue]
+    );
 
     const prior = await client.query(
       `SELECT id FROM memories
-        WHERE ${column} = $1 AND active = true AND type = $2 AND collection = $3
+        WHERE ${column} = $1 AND active = true AND type = $2 AND collection = $3 AND client_id = $4
         ORDER BY created_at DESC LIMIT 1`,
-      [keyValue, payload.type, col]
+      [keyValue, payload.type, col, clientId]
     );
     let supersededId = null;
     if (prior.rows.length > 0) {
@@ -257,21 +373,43 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
     }
   }
 
-  // Cosine similarity: pgvector '<=>' is cosine distance (0 = identical, 2 = opposite).
-  // We want a similarity score in [0,1] range matching the vector store's behavior, so: 1 - (distance / 2).
-  // Score threshold 0.3 matches the old vector store search_points score_threshold.
+  // pgvector '<=>' is cosine distance (0 = identical, 2 = opposite). We map it to
+  // a [0,1] similarity: score = 1 - distance/2, which is exactly 0.5 + cosine_sim/2.
+  // SEARCH_SCORE_FLOOR (default 0.55 ≈ cosine 0.1) drops near-orthogonal matches.
+  const distExpr = vectorDistanceExpr(vectorMode, vectorDims);
+  const scoreExpr = `1 - (${distExpr}) / 2`;
   const sql = `
-    SELECT id, payload, 1 - (vector <=> $1::vector) / 2 AS score
+    SELECT id, payload, ${scoreExpr} AS score
     FROM memories
     WHERE ${wheres.join(' AND ')}
-      AND 1 - (vector <=> $1::vector) / 2 >= 0.3
-    ORDER BY vector <=> $1::vector
+      AND ${scoreExpr} >= ${SEARCH_SCORE_FLOOR}
+    ORDER BY ${distExpr}
     LIMIT $${pIdx}
   `;
   params.push(limit);
 
-  const result = await pool.query(sql, params);
-  return result.rows.map(r => ({ id: r.id, score: parseFloat(r.score), payload: r.payload }));
+  // Run inside a transaction so we can SET LOCAL the HNSW knobs for this query
+  // only. Default ef_search (40) returns ~40 global candidates before the
+  // client_id/collection filters apply, so sparse tenants get zero rows (post-filter
+  // recall collapse). Widen ef_search to the result limit, and on pgvector 0.8+
+  // enable relaxed-order iterative scan so the filter can pull more candidates.
+  const efSearch = clampEfSearch(limit);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL hnsw.ef_search = ${efSearch}`);
+    if (iterativeScanSupported) {
+      await client.query(`SET LOCAL hnsw.iterative_scan = 'relaxed_order'`);
+    }
+    const result = await client.query(sql, params);
+    await client.query('COMMIT');
+    return result.rows.map(r => ({ id: r.id, score: parseFloat(r.score), payload: r.payload }));
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // --- Scroll (paginated scan) ---
@@ -392,6 +530,34 @@ export async function bumpAccessCounts(pointIds, now, collection) {
   );
 }
 
+// Atomically record a cross-agent corroboration: append the agent to
+// payload.observed_by (seeding it from source_agent when absent) and bump
+// observation_count — all in one conditional UPDATE, so two agents
+// corroborating the same memory concurrently can't lose each other's write
+// (a JS read-modify-write here previously dropped one of them).
+// Returns { corroborated, observedCount }; corroborated=false when the agent
+// was already recorded or the cap was reached.
+export async function recordCorroboration(pointId, agent, maxObservedBy = 20, collection) {
+  const col = collection || 'shared_memories';
+  const result = await pool.query(
+    `UPDATE memories
+       SET payload = payload || jsonb_build_object(
+             'observed_by',
+               COALESCE(payload->'observed_by', jsonb_build_array(payload->'source_agent')) || to_jsonb($2::text),
+             'observation_count',
+               COALESCE((payload->>'observation_count')::int,
+                        jsonb_array_length(COALESCE(payload->'observed_by', jsonb_build_array(payload->'source_agent')))) + 1
+           )
+     WHERE id = $1 AND collection = $4
+       AND NOT (COALESCE(payload->'observed_by', jsonb_build_array(payload->'source_agent')) ? $2)
+       AND jsonb_array_length(COALESCE(payload->'observed_by', jsonb_build_array(payload->'source_agent'))) < $3
+     RETURNING jsonb_array_length(payload->'observed_by') AS observed_count`,
+    [pointId, agent, maxObservedBy, col]
+  );
+  if (result.rows.length === 0) return { corroborated: false, observedCount: null };
+  return { corroborated: true, observedCount: result.rows[0].observed_count };
+}
+
 // --- Find by exact payload match ---
 export async function findByPayload(field, value, extraFilter = {}, limit = 10, collection) {
   const col = collection || 'shared_memories';
@@ -471,28 +637,35 @@ export async function getMemoryStats(collection) {
 }
 
 // --- Batch entity type update (used by entity reclassification) ---
-export async function batchUpdateEntityType(entityName, oldType, newType) {
-  // Find all memories whose payload.entities contains {name: entityName, type: oldType}
-  const result = await pool.query(`
-    SELECT id, payload FROM memories
-    WHERE payload -> 'entities' @> $1::jsonb
-  `, [JSON.stringify([{ name: entityName, type: oldType }])]);
+// Single UPDATE that rewrites the payload.entities array in place with a
+// jsonb subquery, instead of SELECT-then-loop-UPDATE. The loop version snapshotted
+// each payload then wrote the whole column back, clobbering any concurrent
+// payload merge (e.g. bumpAccessCounts) that landed between read and write. The
+// single statement reads each payload fresh under a row lock, so concurrent merges
+// on other keys survive. Scoped by collection.
+export async function batchUpdateEntityType(entityName, oldType, newType, collection) {
+  const col = collection || 'shared_memories';
+  const result = await pool.query(
+    `UPDATE memories
+        SET payload = jsonb_set(
+          payload,
+          '{entities}',
+          (
+            SELECT jsonb_agg(
+              CASE WHEN e->>'name' = $1 AND e->>'type' = $2
+                THEN e || jsonb_build_object('type', $3::text)
+                ELSE e
+              END
+            )
+            FROM jsonb_array_elements(payload -> 'entities') AS e
+          )
+        )
+      WHERE payload -> 'entities' @> $4::jsonb AND collection = $5
+      RETURNING id`,
+    [entityName, oldType, newType, JSON.stringify([{ name: entityName, type: oldType }]), col]
+  );
 
-  let totalUpdated = 0;
-  for (const row of result.rows) {
-    const entities = Array.isArray(row.payload.entities) ? row.payload.entities : [];
-    const updated = entities.map(e =>
-      (e.name === entityName && e.type === oldType) ? { ...e, type: newType } : e
-    );
-    const newPayload = { ...row.payload, entities: updated };
-    await pool.query(
-      'UPDATE memories SET payload = $1::jsonb WHERE id = $2',
-      [JSON.stringify(newPayload), row.id]
-    );
-    totalUpdated++;
-  }
-
-  return { total_updated: totalUpdated, total_scanned: result.rows.length };
+  return { total_updated: result.rowCount, total_scanned: result.rowCount };
 }
 
 // --- Collection management ---

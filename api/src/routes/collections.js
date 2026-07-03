@@ -4,6 +4,7 @@ import {
   resolveCollection, validateCollectionSlug, registerCollection,
   unregisterCollection, listCollections, getDefaultCollection,
 } from '../services/collection-registry.js';
+import { requestHasOperatorApproval } from '../services/request-utils.js';
 import { logError } from '../lib/log.js';
 
 export const collectionsRouter = Router();
@@ -87,6 +88,15 @@ collectionsRouter.get('/:name', async (req, res) => {
 // DELETE /collections/:name
 collectionsRouter.delete('/:name', async (req, res) => {
   try {
+    // Hard-deletes every row in the collection — gate it behind operator approval,
+    // same pattern as the destructive /export/import restore, so an agent can't
+    // wipe a collection unprompted.
+    if (!requestHasOperatorApproval(req)) {
+      return res.status(403).json({
+        error: 'operator_approved=true is required to delete a collection',
+      });
+    }
+
     const collectionName = resolveCollection(req.params.name);
 
     if (collectionName === getDefaultCollection()) {
