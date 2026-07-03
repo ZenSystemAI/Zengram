@@ -8,7 +8,7 @@ import {
 } from '../services/stores/interface.js';
 import { scrubCredentials, scrubObject, contentHash as hashContent } from '../services/scrub.js';
 import { validateMemoryInput } from '../middleware/validate.js';
-import { requestHasOperatorApproval } from '../services/request-utils.js';
+import { requestHasOperatorApproval, isInvalidIsoTimestampParam } from '../services/request-utils.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
 import { logError } from '../lib/log.js';
@@ -19,6 +19,12 @@ export const exportRouter = Router();
 exportRouter.get('/', async (req, res) => {
   try {
     const { client_id, type, since, active_only } = req.query;
+    if (isInvalidIsoTimestampParam(since)) {
+      return res.status(400).json({
+        error: 'Invalid since parameter — must be an ISO 8601 timestamp',
+        example: '/export?since=2026-03-09T00:00:00Z',
+      });
+    }
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 1000, 1), 5000);
     const userOffset = Math.max(parseInt(req.query.offset) || 0, 0);
 

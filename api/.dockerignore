@@ -1,0 +1,12 @@
+# Build-context excludes — the Dockerfile only COPYs package*.json, src/ and
+# scripts/, so everything else is dead weight (or secrets) in the context.
+node_modules
+.git
+.gitignore
+.env
+.env.*
+data
+tests
+npm-debug.log*
+Dockerfile
+.dockerignore

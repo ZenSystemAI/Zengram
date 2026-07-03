@@ -3,6 +3,10 @@
 #
 # Adds:
 #   - External network binding (0.0.0.0) for LAN agent access
+#   - Read-only root filesystem (the API writes nothing to disk — all state is in
+#     Postgres over the network), with a tmpfs for /tmp as a safety margin
+#   - restart: always for unattended recovery
+#   - Explicit log rotation so a long-running host doesn't fill the disk
 
 services:
   memory-api:
@@ -10,3 +14,12 @@ services:
       default:
         aliases:
           - shared-brain-api  # backward compat: MCP Hub uses this hostname
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

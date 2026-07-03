@@ -16,7 +16,15 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # Hardening: block privilege escalation and strip all Linux caps — the API is
+    # a plain Node process binding an unprivileged port, so it needs none.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
+      # /health now returns 503 when a dependency is down, so r.ok already fails
+      # the check correctly — no shape change needed.
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8084/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
@@ -46,6 +54,19 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     restart: unless-stopped
+    # Hardening: no privilege escalation, drop all caps, then re-add exactly the
+    # ones the official postgres entrypoint requires — CHOWN/DAC_OVERRIDE/FOWNER
+    # to fix up the data dir, SETGID/SETUID for the gosu drop to the postgres user.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U brain -d shared_brain"]
       interval: 10s

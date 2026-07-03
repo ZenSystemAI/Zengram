@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import pg from 'pg';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/ratelimit.js';
 import { memoryRouter } from './routes/memory.js';
@@ -12,7 +13,7 @@ import { reflectRouter } from './routes/reflect.js';
 import { researchRouter } from './routes/research.js';
 import { collectionsRouter } from './routes/collections.js';
 import { initPgvector, ensureEntityIndex } from './services/pgvector.js';
-import { initEmbeddings } from './services/embedders/interface.js';
+import { initEmbeddings, getEmbeddingDimensions } from './services/embedders/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance } from './services/stores/interface.js';
 import { initKeywordSearch, getKeywordIndexCount } from './services/keyword-search.js';
 import { initLLM } from './services/llm/interface.js';
@@ -38,6 +39,20 @@ const app = express();
 const PORT = process.env.PORT || 8084;
 const HOST = process.env.HOST || '127.0.0.1';
 
+// Trust proxy — the failed-auth throttle keys on req.ip, which is the reverse
+// proxy's IP (MCP Hub / Cloudflare) unless Express is told to read
+// X-Forwarded-For. Off by default (direct-bind). TRUST_PROXY accepts the forms
+// Express itself accepts: 'true'/'false', a hop count, or a CSV of IPs/CIDRs
+// (or a preset like 'loopback'). Only the two scalar keywords need coercing.
+const trustProxy = process.env.TRUST_PROXY;
+if (trustProxy !== undefined && trustProxy.trim() !== '') {
+  const tp = trustProxy.trim();
+  if (tp === 'true') app.set('trust proxy', true);
+  else if (tp === 'false') app.set('trust proxy', false);
+  else if (/^\d+$/.test(tp)) app.set('trust proxy', parseInt(tp, 10));
+  else app.set('trust proxy', tp);
+}
+
 app.use(express.json({ limit: '1mb' }));
 
 // Request correlation ID
@@ -47,9 +62,74 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check (no auth)
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'zengram', timestamp: new Date().toISOString() });
+// Dedicated single-connection pool for the health probe. Kept separate from the
+// vector store's pool so a saturated request pool can't mask a "DB down" signal,
+// and so /health stays off the query hot path. Lazily created on first probe.
+let healthPool = null;
+function getHealthPool() {
+  if (!healthPool) {
+    healthPool = new pg.Pool({
+      connectionString: process.env.POSTGRES_URL,
+      max: 1,
+      connectionTimeoutMillis: 500, // fail fast on a dead DB instead of hanging
+      idleTimeoutMillis: 10_000,
+      // Abort a hung probe at the driver level too — Promise.race alone leaves
+      // the query occupying the pool's single connection, and repeated /health
+      // calls would then queue on it unboundedly.
+      query_timeout: 500,
+    });
+    // Swallow idle-client errors — the probe query is the source of truth.
+    healthPool.on('error', () => {});
+  }
+  return healthPool;
+}
+
+// Probe Postgres with SELECT 1, capped at ~500ms so a stalled DB can't hang the
+// health endpoint. connectionTimeoutMillis covers connect stalls; the race timer
+// covers a hung query on an already-open connection.
+async function probePostgres() {
+  const pool = getHealthPool();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('postgres probe timeout')), 500);
+    timer.unref();
+  });
+  try {
+    await Promise.race([pool.query('SELECT 1'), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// getEmbeddingDimensions() throws until initEmbeddings() has completed — a clean
+// "is the provider up?" flag without adding an export to the embedder interface.
+function embeddingsReady() {
+  try {
+    return getEmbeddingDimensions() > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Deep health check (no auth) — probes real dependencies so a downed Postgres or
+// an uninitialized embedder returns 503, not a misleading 200.
+app.get('/health', async (req, res) => {
+  const checks = { postgres: 'down', embeddings: 'down' };
+  try {
+    await probePostgres();
+    checks.postgres = 'up';
+  } catch {
+    // leave postgres 'down'
+  }
+  checks.embeddings = embeddingsReady() ? 'up' : 'down';
+
+  const healthy = checks.postgres === 'up' && checks.embeddings === 'up';
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
+    service: 'zengram',
+    checks,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // All other routes require API key + rate limiting
@@ -139,6 +219,7 @@ async function start() {
         try {
           const store = _getStoreInstance();
           await store?.close?.();
+          await healthPool?.end?.();
         } catch (e) { /* best-effort */ }
         console.log('[zengram] HTTP server closed');
         process.exit(0);

@@ -33,12 +33,19 @@ jobs:
         working-directory: api
         run: npm run typecheck || true
 
-      - name: Security audit
+      # Blocking: high/critical advisories fail the build. Lower-severity noise
+      # stays out of the gate by virtue of --audit-level=high.
+      - name: Security audit (blocking)
         working-directory: api
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
 
       - name: Run tests
         run: cd api && npm test
+        env:
+          # Run under a real non-UTC zone so timezone regressions surface in CI.
+          # TZ-sensitive tests read BRAIN_TIMEZONE and stay TZ-agnostic; this just
+          # adds realism, it is not expected to change any result.
+          TZ: America/Toronto
 
       - name: Validate MCP server starts
         working-directory: mcp-server
