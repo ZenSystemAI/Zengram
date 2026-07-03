@@ -107,3 +107,69 @@ const SUPERSEDABLE_TYPES = new Set(['fact', 'status']);
 export function isSupersedableType(type) {
   return SUPERSEDABLE_TYPES.has(type);
 }
+
+// Decide which of two contradicting memories to keep. Honors the LLM's
+// suggested_resolution when it clearly names one memory (by id, by "memory_a"/
+// "memory_b" / "first"/"second", or by "newer"/"older"), else falls back to
+// "newer wins" by timestamp — the prior behaviour. basis records which rule
+// fired so the audit trail can distinguish LLM-directed from automatic supersedes.
+export function resolveContradiction({ idA, idB, timeA = 0, timeB = 0, suggestion = '' }) {
+  const text = String(suggestion || '').toLowerCase();
+  const hasA = idA && text.includes(String(idA).toLowerCase());
+  const hasB = idB && text.includes(String(idB).toLowerCase());
+
+  let keep = null;
+  if (hasA && !hasB) keep = 'a';
+  else if (hasB && !hasA) keep = 'b';
+  else {
+    const mentionsA = /\bmemory[_ ]?a\b|\bfirst\b/.test(text);
+    const mentionsB = /\bmemory[_ ]?b\b|\bsecond\b/.test(text);
+    if (mentionsA && !mentionsB) keep = 'a';
+    else if (mentionsB && !mentionsA) keep = 'b';
+    else {
+      const newer = /\bnewer\b|\bmore recent\b|\bmost recent\b|\blatest\b|\blater\b/.test(text);
+      const older = /\bolder\b|\bearlier\b|\boriginal\b/.test(text);
+      if (newer && !older) keep = timeA >= timeB ? 'a' : 'b';
+      else if (older && !newer) keep = timeA <= timeB ? 'a' : 'b';
+    }
+  }
+
+  let basis = 'suggestion';
+  if (keep === null) {
+    // Fallback: newer wins — supersede the older memory (timeA<=timeB => a is
+    // older-or-equal, keep b). Matches the pre-honor timestamp behaviour.
+    keep = timeA <= timeB ? 'b' : 'a';
+    basis = 'timestamp';
+  }
+
+  return keep === 'a'
+    ? { keepId: idA, supersedeId: idB, basis }
+    : { keepId: idB, supersedeId: idA, basis };
+}
+
+// Cap the per-run consolidation backlog. scrollPoints returns newest-first, so
+// reversing yields oldest-first — process the oldest cap memories and report
+// how many remain for the next run. Pure so the slicing is unit-testable.
+export function selectBacklog(points, cap) {
+  const all = Array.isArray(points) ? points : [];
+  const oldestFirst = [...all].reverse();
+  const limit = Number.isFinite(cap) && cap > 0 ? cap : all.length;
+  const selected = oldestFirst.slice(0, limit);
+  return { selected, remaining: Math.max(0, all.length - selected.length) };
+}
+
+const CONNECTION_CAP = 20;
+
+// Merge connection target ids, dedupe (existing first for stability), and cap.
+// Prevents each run from clobbering prior-run connections on a memory.
+export function mergeConnections(existing = [], incoming = [], cap = CONNECTION_CAP) {
+  const seen = new Set();
+  const out = [];
+  for (const id of [...(existing || []), ...(incoming || [])]) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= cap) break;
+  }
+  return out;
+}

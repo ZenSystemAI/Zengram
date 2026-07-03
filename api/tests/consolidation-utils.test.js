@@ -7,6 +7,9 @@ import {
   extractConsolidationJson,
   isSupersedableType,
   parseConsolidationResponse,
+  resolveContradiction,
+  selectBacklog,
+  mergeConnections,
 } from '../src/services/consolidation-utils.js';
 
 describe('extractConsolidationJson', () => {
@@ -87,5 +90,98 @@ describe('isSupersedableType', () => {
     assert.equal(isSupersedableType(''), false);
     assert.equal(isSupersedableType(null), false);
     assert.equal(isSupersedableType(undefined), false);
+  });
+});
+
+describe('resolveContradiction', () => {
+  const A = 'aaaaaaaa-0000-0000-0000-000000000001';
+  const B = 'bbbbbbbb-0000-0000-0000-000000000002';
+
+  it('honors a suggestion that names memory A by id (supersede B)', () => {
+    const r = resolveContradiction({ idA: A, idB: B, timeA: 1, timeB: 2, suggestion: `Keep ${A}, it is verified` });
+    assert.deepEqual(r, { keepId: A, supersedeId: B, basis: 'suggestion' });
+  });
+
+  it('honors a suggestion that names memory B by id (supersede A)', () => {
+    const r = resolveContradiction({ idA: A, idB: B, timeA: 2, timeB: 1, suggestion: `${B} is correct` });
+    assert.deepEqual(r, { keepId: B, supersedeId: A, basis: 'suggestion' });
+  });
+
+  it('honors "memory_a" / "memory_b" phrasing', () => {
+    assert.equal(resolveContradiction({ idA: A, idB: B, suggestion: 'memory_a is likely correct' }).keepId, A);
+    assert.equal(resolveContradiction({ idA: A, idB: B, suggestion: 'prefer memory_b here' }).keepId, B);
+  });
+
+  it('honors "newer"/"older" phrasing against timestamps', () => {
+    // A is newer (time 5 > 3) → "newer is correct" keeps A
+    assert.equal(resolveContradiction({ idA: A, idB: B, timeA: 5, timeB: 3, suggestion: 'the newer one is correct' }).keepId, A);
+    // A is older (time 1 < 4) → "older is correct" keeps A
+    assert.equal(resolveContradiction({ idA: A, idB: B, timeA: 1, timeB: 4, suggestion: 'trust the original older record' }).keepId, A);
+  });
+
+  it('falls back to newer-wins by timestamp when the suggestion is unclear', () => {
+    // A older (1) than B (2): supersede A, keep B
+    const r = resolveContradiction({ idA: A, idB: B, timeA: 1, timeB: 2, suggestion: 'they conflict somehow' });
+    assert.deepEqual(r, { keepId: B, supersedeId: A, basis: 'timestamp' });
+  });
+
+  it('falls back when the suggestion is empty', () => {
+    const r = resolveContradiction({ idA: A, idB: B, timeA: 9, timeB: 2, suggestion: '' });
+    assert.deepEqual(r, { keepId: A, supersedeId: B, basis: 'timestamp' });
+  });
+
+  it('does not honor a suggestion that mentions both ids (ambiguous → timestamp)', () => {
+    const r = resolveContradiction({ idA: A, idB: B, timeA: 1, timeB: 2, suggestion: `${A} and ${B} both say things` });
+    assert.equal(r.basis, 'timestamp');
+  });
+});
+
+describe('selectBacklog', () => {
+  // scrollPoints returns newest-first; selectBacklog reverses to oldest-first.
+  const newestFirst = [{ id: 'n3' }, { id: 'n2' }, { id: 'n1' }, { id: 'n0' }];
+
+  it('caps to the oldest N and reports the remainder', () => {
+    const { selected, remaining } = selectBacklog(newestFirst, 2);
+    assert.deepEqual(selected.map(p => p.id), ['n0', 'n1']);
+    assert.equal(remaining, 2);
+  });
+
+  it('returns everything oldest-first when under the cap', () => {
+    const { selected, remaining } = selectBacklog(newestFirst, 10);
+    assert.deepEqual(selected.map(p => p.id), ['n0', 'n1', 'n2', 'n3']);
+    assert.equal(remaining, 0);
+  });
+
+  it('treats a non-positive or non-finite cap as no cap', () => {
+    assert.equal(selectBacklog(newestFirst, 0).selected.length, 4);
+    assert.equal(selectBacklog(newestFirst, NaN).selected.length, 4);
+  });
+
+  it('handles empty / non-array input', () => {
+    assert.deepEqual(selectBacklog([], 5), { selected: [], remaining: 0 });
+    assert.deepEqual(selectBacklog(undefined, 5), { selected: [], remaining: 0 });
+  });
+});
+
+describe('mergeConnections', () => {
+  it('merges existing and incoming, existing-first, deduped', () => {
+    assert.deepEqual(mergeConnections(['a', 'b'], ['b', 'c']), ['a', 'b', 'c']);
+  });
+
+  it('drops falsy ids', () => {
+    assert.deepEqual(mergeConnections(['a'], [null, undefined, '', 'd']), ['a', 'd']);
+  });
+
+  it('caps the total number of connections', () => {
+    const existing = Array.from({ length: 18 }, (_, i) => `e${i}`);
+    const incoming = ['x', 'y', 'z'];
+    const out = mergeConnections(existing, incoming, 20);
+    assert.equal(out.length, 20);
+    assert.equal(out[18], 'x');
+    assert.equal(out[19], 'y');
+  });
+
+  it('defaults to empty arrays', () => {
+    assert.deepEqual(mergeConnections(), []);
   });
 });

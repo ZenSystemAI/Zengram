@@ -13,7 +13,11 @@ import { VALID_IMPORTANCE } from '../middleware/validate.js';
 import {
   parseConsolidationResponse, isLlmOutputError, isSupersedableType,
   consolidationRunStatus, consolidationJobStatus,
+  resolveContradiction, selectBacklog, mergeConnections,
 } from './consolidation-utils.js';
+import { isLlmTruncationError } from './llm/retry.js';
+
+const CONSOLIDATION_MAX_MEMORIES = parseInt(process.env.CONSOLIDATION_MAX_MEMORIES) || 500;
 
 const SEMANTIC_DEDUP_THRESHOLD = 0.92; // Skip if existing memory is >92% similar
 
@@ -74,9 +78,6 @@ Rules:
 - Connections should be meaningful, not trivial (e.g., same client mentioned)
 - compressed_summaries: For groups of 3+ events describing the same session or topic, produce a compressed summary (2-3 sentences max). This replaces verbose session logs with concise facts.
 - Do NOT extract or discover entities — entity extraction is handled separately at write time.
-- insights: ALWAYS return an empty array. Do NOT generate insights.
-- entities: ALWAYS return an empty array. Entity extraction happens at write time, not consolidation.
-- entity_relationship_types: ALWAYS return an empty array. Relationships are inferred from co-occurrence at write time.
 - If no merges/contradictions/connections/compressed_summaries found, return empty arrays
 - Preserve client_id from source memories
 - For each memory, suggest the most appropriate knowledge_category from: brand, strategy, meeting, content, technical, relationship, general. Consider: brand=voice/identity/guidelines, strategy=plans/positioning/campaigns, meeting=call notes/action items, content=published work/performance, technical=hosting/CMS/SEO issues, relationship=contacts/preferences. Only include a memory in knowledge_categories if you are suggesting a category different from its current knowledge_category attribute (or if the current one is null/general and a more specific one fits).
@@ -108,8 +109,15 @@ export async function runConsolidation() {
       return { status: 'complete', memories_processed: 0, message: 'No unconsolidated memories found' };
     }
 
+    // Cap the backlog per run (oldest-first) so one run can't scroll an
+    // unbounded queue into the LLM. Remaining memories are picked up next run.
+    const { selected, remaining } = selectBacklog(points, CONSOLIDATION_MAX_MEMORIES);
+    if (remaining > 0) {
+      console.log(`[consolidation] Backlog cap ${CONSOLIDATION_MAX_MEMORIES}: processing ${selected.length} oldest, ${remaining} deferred to next run`);
+    }
+
     const groups = {};
-    for (const point of points) {
+    for (const point of selected) {
       const clientId = point.payload.client_id || 'global';
       if (!groups[clientId]) groups[clientId] = [];
       groups[clientId].push(point);
@@ -141,7 +149,11 @@ export async function runConsolidation() {
           await updatePointPayload(ids, { consolidated: true, consolidated_at: new Date().toISOString() });
         } catch (err) {
           errors.push({ client_id: clientId, batch_start: i, error: err.message });
-          if (isLlmOutputError(err)) {
+          if (isLlmTruncationError(err)) {
+            // Batch response hit the token ceiling. Left unmarked; a smaller
+            // effective batch or higher LLM_MAX_TOKENS is needed to clear it.
+            console.error(`[consolidation] Batch for ${clientId} truncated at token limit (${batch.length} memories) — left unconsolidated`);
+          } else if (isLlmOutputError(err)) {
             // Leave the batch unmarked so the next consolidation run retries it.
             console.error(`[consolidation] Batch for ${clientId} left unconsolidated due to LLM JSON error`);
           } else {
@@ -157,7 +169,8 @@ export async function runConsolidation() {
 
     const summary = {
       status: consolidationRunStatus(errors),
-      memories_processed: points.length,
+      memories_processed: selected.length,
+      backlog_remaining: remaining,
       groups_processed: Object.keys(groups).length,
       merged_facts: totalMerged,
       contradictions_found: totalContradictions,
@@ -189,7 +202,7 @@ export async function runConsolidation() {
     }
     summary.events_expired = eventsExpired;
 
-    console.log(`[consolidation] Complete: ${points.length} memories, ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalCompressedSummaries} compressed summaries, ${totalSkipped} skipped (dedup), ${totalCategoriesUpdated} categories updated, ${eventsExpired} events expired`);
+    console.log(`[consolidation] Complete: ${selected.length} memories (${remaining} deferred), ${totalMerged} merged, ${totalContradictions} contradictions, ${totalConnections} connections, ${totalCompressedSummaries} compressed summaries, ${totalSkipped} skipped (dedup), ${totalCategoriesUpdated} categories updated, ${eventsExpired} events expired`);
 
     return summary;
   } catch (err) {
@@ -220,7 +233,9 @@ async function consolidateBatch(points, clientId) {
   }).join('\n\n');
 
   const prompt = CONSOLIDATION_PROMPT + memoriesText;
-  const responseText = await complete(prompt);
+  // Low, explicit temperature — consolidation is a deterministic extraction task,
+  // not a generative one; don't rely on the provider's implicit 0.3 default.
+  const responseText = await complete(prompt, { temperature: 0.2 });
 
   // Parse the LLM response (tolerant of code fences + trailing prose, with
   // array-field schema validation). Malformed output throws LlmOutputError so
@@ -404,23 +419,29 @@ async function consolidateBatch(points, clientId) {
         }).catch(e => console.error('[consolidation:store-event]', e.message));
       }
 
-      // Auto-supersede the older memory when the contradiction is between two
-      // current-state assertions (fact/status) — the newer one wins. Events and
+      // Resolve the contradiction between two current-state assertions
+      // (fact/status). Honor the LLM's suggested_resolution when it names a
+      // winner; otherwise fall back to "newer wins" by timestamp. Events and
       // decisions are historical records and stay active; the CONTRADICTION
       // DETECTED event above preserves the audit trail either way.
       try {
         const a = points.find(p => p.id === contradiction.memory_a);
         const b = points.find(p => p.id === contradiction.memory_b);
         if (a && b) {
-          const aTime = new Date(a.payload?.created_at || 0).getTime();
-          const bTime = new Date(b.payload?.created_at || 0).getTime();
-          const [older, newer] = aTime <= bTime ? [a, b] : [b, a];
-          if (isSupersedableType(older.payload?.type)) {
-            await updatePointPayload(older.id, {
+          const { keepId, supersedeId, basis } = resolveContradiction({
+            idA: a.id,
+            idB: b.id,
+            timeA: new Date(a.payload?.created_at || 0).getTime(),
+            timeB: new Date(b.payload?.created_at || 0).getTime(),
+            suggestion: contradiction.suggested_resolution,
+          });
+          const supersedeMemory = supersedeId === a.id ? a : b;
+          if (isSupersedableType(supersedeMemory.payload?.type)) {
+            await updatePointPayload(supersedeId, {
               active: false,
-              superseded_by: newer.id,
+              superseded_by: keepId,
               superseded_at: now,
-              superseded_reason: 'contradiction-resolved-auto',
+              superseded_reason: basis === 'suggestion' ? 'contradiction-resolved-llm' : 'contradiction-resolved-auto',
             });
           }
         }
@@ -432,12 +453,21 @@ async function consolidateBatch(points, clientId) {
     }
   }
 
-  // Update connection metadata on existing points.
+  // Update connection metadata on existing points. Merge with prior-run (and
+  // earlier-in-this-run) connections instead of overwriting — dedupe by target
+  // id and cap per memory. connAccum tracks accumulated ids within this run so
+  // a memory appearing in several connections doesn't clobber itself.
   if (result.connections?.length > 0) {
+    const connAccum = new Map();
     for (const connection of result.connections) {
       for (const memoryId of (connection.memories || [])) {
+        const point = points.find(p => p.id === memoryId);
+        const base = connAccum.get(memoryId) ?? (point?.payload?.connections || []);
+        const incoming = connection.memories.filter(id => id !== memoryId);
+        const merged = mergeConnections(base, incoming);
+        connAccum.set(memoryId, merged);
         await updatePointPayload(memoryId, {
-          connections: connection.memories.filter(id => id !== memoryId),
+          connections: merged,
           connection_description: connection.relationship,
         });
       }

@@ -119,7 +119,7 @@ reflectRouter.post('/', async (req, res) => {
     }).join('\n\n');
 
     const prompt = REFLECT_PROMPT + escapeXml(topic) + '\n\nMEMORIES:\n' + memoriesText;
-    const responseText = await complete(prompt);
+    const responseText = await complete(prompt, { temperature: 0.2 });
 
     // Parse the LLM response (tolerant of code fences / trailing prose).
     let reflection;

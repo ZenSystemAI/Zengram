@@ -1,4 +1,11 @@
 import fetchWithTimeout from '../fetch-with-timeout.js';
+import { withRetry, resolveMaxTokens, LlmTruncationError, LlmHttpError, LlmResponseError } from './retry.js';
+
+// Pure truncation detector — Ollama sets done_reason=length when generation
+// hits num_predict (vs done_reason=stop on a natural stop).
+export function isOllamaTruncated(data) {
+  return data?.done_reason === 'length';
+}
 
 export class OllamaProvider {
   constructor() {
@@ -7,30 +14,41 @@ export class OllamaProvider {
   }
 
   async complete(prompt, options = {}) {
-    const response = await fetchWithTimeout(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: 'system', content: 'You are a memory consolidation engine. Analyze memories and produce structured JSON output. Always respond with valid JSON.' },
-          { role: 'user', content: prompt },
-        ],
-        stream: false,
-        options: {
-          temperature: options.temperature || 0.3,
-          num_predict: options.max_tokens || 4096,
-        },
-        format: 'json',
-      }),
-    }, 300000);
+    return withRetry(async () => {
+      const response = await fetchWithTimeout(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            { role: 'system', content: 'You are a memory consolidation engine. Analyze memories and produce structured JSON output. Always respond with valid JSON.' },
+            { role: 'user', content: prompt },
+          ],
+          stream: false,
+          options: {
+            temperature: options.temperature || 0.3,
+            num_predict: resolveMaxTokens(options),
+          },
+          format: 'json',
+        }),
+      }, 300000);
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Ollama API error: ${response.status} ${body}`);
-    }
+      if (!response.ok) {
+        const body = await response.text();
+        throw new LlmHttpError(response.status, body, 'Ollama');
+      }
 
-    const data = await response.json();
-    return data.message.content;
+      const data = await response.json();
+
+      if (isOllamaTruncated(data)) {
+        throw new LlmTruncationError('Ollama response truncated at num_predict (done_reason=length)');
+      }
+
+      const content = data?.message?.content;
+      if (typeof content !== 'string') {
+        throw new LlmResponseError('Ollama returned no message content');
+      }
+      return content;
+    });
   }
 }
