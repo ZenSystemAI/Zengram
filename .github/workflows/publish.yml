@@ -3,6 +3,7 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  workflow_dispatch: {}
 
 jobs:
   publish:
@@ -23,11 +24,13 @@ jobs:
       - name: Install API dependencies
         run: cd api && npm ci
 
-      - name: Run tests
-        run: cd api && npm test
-
+      # MCP deps must be installed BEFORE the api test run: the api suite
+      # includes tests that import mcp-server/src/index.js (tool annotations).
       - name: Install MCP server dependencies
         run: cd mcp-server && npm ci
+
+      - name: Run tests
+        run: cd api && npm test
 
       - name: Publish MCP server
         run: |
