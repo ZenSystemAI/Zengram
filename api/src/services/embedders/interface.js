@@ -4,6 +4,21 @@
 
 const PROVIDER = process.env.EMBEDDING_PROVIDER || 'openai';
 
+// Asymmetric instruction prefixes. Many modern encoders (Qwen3-Embedding, e5,
+// gte-Qwen, bge-multilingual-gemma) expect a short instruction on the QUERY
+// side and the raw text on the DOCUMENT side. Verbatim + opt-in (empty by
+// default) so the format stays model-agnostic and providers with native
+// asymmetric handling (Gemini taskType) are unaffected unless explicitly set.
+// Env files (docker-compose --env-file, .env) cannot carry real newlines, but
+// instruction prefixes like Qwen3's `Instruct: …\nQuery: ` need one. Decode the
+// common backslash escapes so the env value `Instruct: …\nQuery: ` yields a true
+// newline at runtime, matching what the model expects.
+export function decodeEnvEscapes(s) {
+  return (s || '').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+}
+const QUERY_PREFIX = decodeEnvEscapes(process.env.EMBED_QUERY_PREFIX);
+const DOC_PREFIX = decodeEnvEscapes(process.env.EMBED_DOC_PREFIX);
+
 let provider = null;
 
 export async function initEmbeddings() {
@@ -11,6 +26,9 @@ export async function initEmbeddings() {
     case 'openai': {
       const { OpenAIEmbedder } = await import('./openai.js');
       provider = new OpenAIEmbedder();
+      // Auto-detect dimensions when OPENAI_EMBEDDING_DIMS is not set (e.g. a
+      // local Qwen3-Embedding server with native dims).
+      if (typeof provider.init === 'function') await provider.init();
       break;
     }
     case 'gemini': {
@@ -43,7 +61,10 @@ export async function initEmbeddings() {
 
 export async function embed(text, purpose) {
   if (!provider) throw new Error('Embedding provider not initialized. Call initEmbeddings() first.');
-  return provider.embed(text, purpose);
+  let input = text;
+  if (purpose === 'search' && QUERY_PREFIX) input = QUERY_PREFIX + text;
+  else if (purpose === 'store' && DOC_PREFIX) input = DOC_PREFIX + text;
+  return provider.embed(input, purpose);
 }
 
 export function getEmbeddingDimensions() {

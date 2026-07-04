@@ -4,6 +4,8 @@
 // oversell it. Provides the keyword retrieval path that runs alongside
 // vector search; results are fused via RRF at the route layer.
 
+import { bm25TsConfig } from './bm25-config.js';
+
 let store = null;
 
 export function initKeywordSearch(storeInstance) {
@@ -48,11 +50,14 @@ export async function keywordSearch(queryText, filters = {}, limit = 20) {
   // websearch_to_tsquery handles natural language like plainto_tsquery but
   // also supports quoted phrases ("exact phrase") and negation (-term), and
   // never throws on unbalanced syntax.
+  // The config must match the one the content_tsv trigger used (bm25-config.js);
+  // mismatched configs silently return no matches.
+  const cfg = bm25TsConfig();
   let sql = `
     SELECT memory_id,
-           ts_rank_cd(content_tsv, websearch_to_tsquery('english', $1)) AS rank
+           ts_rank_cd(content_tsv, websearch_to_tsquery('${cfg}', $1)) AS rank
     FROM memory_search
-    WHERE content_tsv @@ websearch_to_tsquery('english', $1)
+    WHERE content_tsv @@ websearch_to_tsquery('${cfg}', $1)
       AND active = true
   `;
   const params = [queryText];

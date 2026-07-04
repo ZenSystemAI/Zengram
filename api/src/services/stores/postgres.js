@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { bm25TsConfig, isManagedTsConfig, MANAGED_TSCONFIG } from '../bm25-config.js';
 
 export class PostgresStore {
   constructor() {
@@ -157,18 +158,8 @@ export class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_ms_active ON memory_search(active) WHERE active = true;
     `);
 
-    // tsvector auto-compute trigger
-    await this.pool.query(`
-      CREATE OR REPLACE FUNCTION memory_search_tsv_trigger() RETURNS trigger AS $$
-      BEGIN
-        NEW.content_tsv := to_tsvector('english', COALESCE(NEW.content, ''));
-        RETURN NEW;
-      END $$ LANGUAGE plpgsql;
-
-      DROP TRIGGER IF EXISTS trg_ms_tsv ON memory_search;
-      CREATE TRIGGER trg_ms_tsv BEFORE INSERT OR UPDATE OF content
-        ON memory_search FOR EACH ROW EXECUTE FUNCTION memory_search_tsv_trigger();
-    `);
+    // tsvector text-search configuration (defaults to 'english' — see bm25-config.js).
+    await this.ensureBm25Config();
 
     // Co-occurrence partial indexes for graph search performance
     await this.pool.query(`
@@ -181,6 +172,68 @@ export class PostgresStore {
     `);
 
     console.log(`[postgres] Database ready`);
+  }
+
+  // Ensure the BM25 tsvector pipeline uses the configured text-search config.
+  // Idempotent and self-healing: creates the managed multilingual config when
+  // selected, (re)builds the tsv trigger for the active config, and rebuilds
+  // existing content_tsv values once whenever the active config changes (so a
+  // switch away from the 'english' default doesn't leave stale lexemes that
+  // silently fail to match the new query config).
+  async ensureBm25Config() {
+    const cfg = bm25TsConfig();
+
+    // The managed multilingual config: unaccent + simple (lossless, accent-folded,
+    // language-agnostic). Only auto-created when it's the one we manage; any other
+    // BM25_TSCONFIG is assumed to be provided by Postgres or the operator.
+    if (isManagedTsConfig(cfg)) {
+      await this.pool.query(`CREATE EXTENSION IF NOT EXISTS unaccent`);
+      await this.pool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = '${MANAGED_TSCONFIG}') THEN
+            CREATE TEXT SEARCH CONFIGURATION ${MANAGED_TSCONFIG} (COPY = simple);
+            ALTER TEXT SEARCH CONFIGURATION ${MANAGED_TSCONFIG}
+              ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part, numword, numhword
+              WITH unaccent, simple;
+          END IF;
+        END $$;
+      `);
+    }
+
+    // (Re)create the trigger bound to the active config.
+    await this.pool.query(`
+      CREATE OR REPLACE FUNCTION memory_search_tsv_trigger() RETURNS trigger AS $$
+      BEGIN
+        NEW.content_tsv := to_tsvector('${cfg}', COALESCE(NEW.content, ''));
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_ms_tsv ON memory_search;
+      CREATE TRIGGER trg_ms_tsv BEFORE INSERT OR UPDATE OF content
+        ON memory_search FOR EACH ROW EXECUTE FUNCTION memory_search_tsv_trigger();
+    `);
+
+    // Track the active config so we only reindex when it actually changes.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS zengram_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMPTZ DEFAULT NOW())
+    `);
+    const { rows } = await this.pool.query(`SELECT value FROM zengram_meta WHERE key = 'bm25_tsconfig'`);
+    const previous = rows[0]?.value || null;
+
+    if (previous !== cfg) {
+      const { rowCount } = await this.pool.query(
+        `UPDATE memory_search SET content_tsv = to_tsvector('${cfg}', COALESCE(content, ''))`
+      );
+      await this.pool.query(
+        `INSERT INTO zengram_meta (key, value, updated_at) VALUES ('bm25_tsconfig', $1, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [cfg]
+      );
+      console.log(`[postgres] BM25 tsconfig '${previous || 'english(legacy)'}' → '${cfg}'; reindexed ${rowCount} rows`);
+    } else {
+      console.log(`[postgres] BM25 tsconfig: '${cfg}'`);
+    }
   }
 
   async createEvent(data) {
@@ -202,6 +255,7 @@ export class PostgresStore {
     if (filters.type) { sql += ` AND type = $${i++}`; params.push(filters.type); }
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
+    if (filters.knowledge_category) { sql += ` AND knowledge_category = $${i++}`; params.push(filters.knowledge_category); }
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.since) { sql += ` AND created_at >= $${i++}`; params.push(filters.since); }
 
@@ -236,6 +290,7 @@ export class PostgresStore {
 
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
+    if (filters.knowledge_category) { sql += ` AND knowledge_category = $${i++}`; params.push(filters.knowledge_category); }
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.key) { sql += ` AND key ILIKE $${i++}`; params.push(`%${filters.key}%`); }
 
@@ -270,6 +325,7 @@ export class PostgresStore {
 
     if (filters.source_agent) { sql += ` AND source_agent = $${i++}`; params.push(filters.source_agent); }
     if (filters.category) { sql += ` AND category = $${i++}`; params.push(filters.category); }
+    if (filters.knowledge_category) { sql += ` AND knowledge_category = $${i++}`; params.push(filters.knowledge_category); }
     if (filters.client_id) { sql += ` AND client_id = $${i++}`; params.push(filters.client_id); }
     if (filters.subject) { sql += ` AND subject ILIKE $${i++}`; params.push(`%${filters.subject}%`); }
 
