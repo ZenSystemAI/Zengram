@@ -14,7 +14,13 @@ const PROVIDER = process.env.EMBEDDING_PROVIDER || 'openai';
 // common backslash escapes so the env value `Instruct: …\nQuery: ` yields a true
 // newline at runtime, matching what the model expects.
 export function decodeEnvEscapes(s) {
-  return (s || '').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+  let v = s || '';
+  // Instruction prefixes often end in a significant trailing space
+  // ("...\nQuery: ") that secret managers and env tooling trim from bare
+  // values. Wrapping the value in double quotes preserves it — strip one
+  // surrounding pair here before decoding escapes.
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+  return v.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
 }
 const QUERY_PREFIX = decodeEnvEscapes(process.env.EMBED_QUERY_PREFIX);
 const DOC_PREFIX = decodeEnvEscapes(process.env.EMBED_DOC_PREFIX);

@@ -17,4 +17,13 @@ describe('decodeEnvEscapes (env-file prefix newlines)', () => {
     assert.equal(decodeEnvEscapes(''), '');
     assert.equal(decodeEnvEscapes(undefined), '');
   });
+  it('strips one surrounding quote pair, preserving significant trailing whitespace', () => {
+    // Secret managers trim bare trailing spaces; quoting protects them.
+    assert.equal(decodeEnvEscapes('"Instruct: task\\nQuery: "'), 'Instruct: task\nQuery: ');
+    assert.equal(decodeEnvEscapes('"a"'), 'a');
+    // Only a full surrounding pair is stripped — interior quotes are content.
+    assert.equal(decodeEnvEscapes('say "hi" now'), 'say "hi" now');
+    assert.equal(decodeEnvEscapes('"unterminated'), '"unterminated');
+    assert.equal(decodeEnvEscapes('"'), '"');
+  });
 });
