@@ -41,17 +41,22 @@ export function accessBoost(accessCount) {
  * @param {number|null} params.simScore - Vector similarity in [0,1]; null when keyword-only
  * @param {number|null} params.rrfScore - RRF fusion score; null in single-path searches
  * @param {number|null} params.maxRrfScore - Highest RRF score in the fused set (normalizer)
+ * @param {number|null} [params.rerankScore] - Cross-encoder score in [0,1]; when present it
+ *   replaces the sim/RRF blend entirely (the reranker read query+document together, a
+ *   strictly stronger relevance signal than either retrieval path)
  * @param {number} params.effectiveConfidence - Confidence after decay
  * @param {number} params.accessCount - Retrieval count for the access boost
  * @param {number} [params.temporalBoost=1.0] - Temporal proximity multiplier
  * @param {string} params.importance - critical/high/medium/low
  * @returns {number} Effective score, 4 decimal places
  */
-export function effectiveScore({ simScore, rrfScore, maxRrfScore, effectiveConfidence, accessCount, temporalBoost = 1.0, importance }) {
+export function effectiveScore({ simScore, rrfScore, maxRrfScore, rerankScore, effectiveConfidence, accessCount, temporalBoost = 1.0, importance }) {
   const sim = (simScore === null || simScore === undefined) ? RANK_KEYWORD_ONLY_SIM : simScore;
-  const blended = (rrfScore != null && maxRrfScore > 0)
-    ? RANK_W_SIM * sim + RANK_W_RRF * (rrfScore / maxRrfScore)
-    : sim;
+  const blended = (rerankScore !== null && rerankScore !== undefined)
+    ? rerankScore
+    : (rrfScore != null && maxRrfScore > 0)
+      ? RANK_W_SIM * sim + RANK_W_RRF * (rrfScore / maxRrfScore)
+      : sim;
   const importanceWeight = IMPORTANCE_WEIGHTS[importance] ?? IMPORTANCE_WEIGHTS.medium;
   const confidence = (effectiveConfidence === null || effectiveConfidence === undefined) ? 1.0 : effectiveConfidence;
   return +(blended * confidence * accessBoost(accessCount) * temporalBoost * importanceWeight).toFixed(4);

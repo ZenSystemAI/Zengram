@@ -7,10 +7,15 @@
 import { embed } from './embedders/interface.js';
 import { getPoints, searchPoints } from './pgvector.js';
 import { isKeywordSearchAvailable, keywordSearch } from './keyword-search.js';
-import { reciprocalRankFusion } from './rrf.js';
+import { reciprocalRankFusion, rrfWeights } from './rrf.js';
+import { isRerankAvailable, rerankMemories } from './reranker/interface.js';
 import { extractSearchTerms } from './query-expander.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false';
+
+// When reranking is on, fuse a larger candidate pool (precision comes from the
+// cross-encoder, not the fused order), then rerank down to maxMemories.
+const RERANK_POOL = parseInt(process.env.RERANK_CANDIDATES) || 40;
 
 const escapeXml = (str) => String(str ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -48,7 +53,11 @@ export function formatMemoriesXml(memories) {
  * @returns {Promise<{memories: Array, vectorError: Error|null, keywordCount: number, degradedKeywordQuery: string|null}>}
  */
 export async function retrieveAndFuse({ queryText, filter = { active: true }, maxMemories, multiPath = MULTI_PATH_SEARCH }) {
-  const fetchLimit = multiPath ? Math.min(maxMemories * 2, 50) : maxMemories;
+  const rerankOn = isRerankAvailable();
+  // With reranking on, keep a deeper candidate pool so the cross-encoder has
+  // real material to re-order; without it, behaviour is unchanged.
+  const poolSize = rerankOn ? Math.max(maxMemories, RERANK_POOL) : maxMemories;
+  const fetchLimit = multiPath ? Math.min(Math.max(maxMemories * 2, poolSize), 50) : maxMemories;
 
   let vectorError = null;
   const vectorPromise = embed(queryText, 'search')
@@ -87,7 +96,7 @@ export async function retrieveAndFuse({ queryText, filter = { active: true }, ma
       keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })),
     ];
 
-    const fused = reciprocalRankFusion(rankedLists).slice(0, maxMemories);
+    const fused = reciprocalRankFusion(rankedLists, undefined, rrfWeights()).slice(0, poolSize);
     const payloadMap = new Map(vectorResults.map(r => [r.id, r]));
 
     const missingIds = fused.map(f => f.id).filter(id => !payloadMap.has(id));
@@ -104,7 +113,15 @@ export async function retrieveAndFuse({ queryText, filter = { active: true }, ma
 
     memories = fused.map(f => payloadMap.get(f.id)).filter(Boolean);
   } else {
-    memories = vectorResults.slice(0, maxMemories);
+    memories = vectorResults.slice(0, poolSize);
+  }
+
+  // Cross-encoder rerank the candidate pool, then trim to the requested count.
+  // No-op (identity) when reranking is disabled or unavailable.
+  if (rerankOn && memories.length > 1) {
+    memories = await rerankMemories(queryText, memories, { topN: maxMemories });
+  } else {
+    memories = memories.slice(0, maxMemories);
   }
 
   return { memories, vectorError, keywordCount: keywordResults.length, degradedKeywordQuery };

@@ -14,7 +14,9 @@ import { scrubCredentials, scrubObject, contentHash as hashContent } from '../se
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { validateMemoryInput, validateContent, validateImportance, validateMetadata, VALID_KNOWLEDGE_CATEGORIES } from '../middleware/validate.js';
 import { isKeywordSearchAvailable, indexMemory, deactivateMemory, keywordSearch } from '../services/keyword-search.js';
-import { reciprocalRankFusion } from '../services/rrf.js';
+import { reciprocalRankFusion, rrfWeights } from '../services/rrf.js';
+import { isRerankAvailable, rerankMemories } from '../services/reranker/interface.js';
+import { GRAPH_RETRIEVAL_ENABLED, graphCandidates, rrfGraphWeight } from '../services/graph-retrieval.js';
 import { effectiveScore, extractSessionId, diversifyBySession } from '../services/ranking.js';
 import { scoreRelevance, relevancePayloadFields } from '../services/relevance-scorer.js';
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
@@ -23,6 +25,9 @@ import { truthyParam, falseyParam } from '../services/request-utils.js';
 import { logError } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
+
+// Cross-encoder rerank: fuse a deeper candidate pool, then rerank to top-k.
+const RERANK_POOL = parseInt(process.env.RERANK_CANDIDATES) || 40;
 
 // Cap on the observed_by corroboration list — enough to record broad
 // cross-agent agreement without letting the payload grow unbounded.
@@ -286,7 +291,9 @@ memoryRouter.post('/', async (req, res) => {
 });
 
 // GET /memory/search — Multi-path retrieval with RRF fusion
-// Paths: vector (semantic) + keyword (Postgres full-text). Graph BFS path retired in v4.
+// Paths: vector (semantic) + keyword (Postgres full-text) + optional entity
+// graph (GRAPH_RETRIEVAL_ENABLED), with an optional cross-encoder rerank stage
+// (RERANK_ENABLED) over the fused pool.
 memoryRouter.get('/search', async (req, res) => {
   try {
     const { q, type, source_agent, client_id, category, limit, include_superseded, entity, format, at_time, reference_date, date_from, date_to, knowledge_category: kc, read_only, track_access } = req.query;
@@ -351,15 +358,25 @@ memoryRouter.get('/search', async (req, res) => {
 
     // --- Multi-path retrieval ---
     const useMultiPath = MULTI_PATH_SEARCH && !entity; // entity filter is vector-store-only
+    const rerankOn = isRerankAvailable();
     // Fetch deeper than the response limit so fusion + post-filters have real
     // candidates to work with. The old hard cap of 50 silently truncated
-    // limit>25 multipath queries.
-    const fetchLimit = useMultiPath ? Math.min(maxResults * 2, 200) : maxResults;
+    // limit>25 multipath queries. When reranking, fetch at least the rerank
+    // pool so the cross-encoder has real candidates to re-score.
+    const baseFetch = useMultiPath ? maxResults * 2 : maxResults;
+    const fetchLimit = Math.min(Math.max(baseFetch, rerankOn ? RERANK_POOL : 0), 200);
 
-    // Always run vector search (use expanded query for better coverage)
-    const vectorPromise = embed(searchQuery, 'search').then(vector =>
-      searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters)
-    );
+    // Always run vector search (use expanded query for better coverage).
+    // An embedding-backend outage must not take the whole search down —
+    // capture the failure and degrade to the surviving paths below.
+    let vectorError = null;
+    const vectorPromise = embed(searchQuery, 'search')
+      .then(vector => searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters))
+      .catch(e => {
+        vectorError = e;
+        console.error('[memory:search] Vector path failed:', e.message);
+        return [];
+      });
 
     // Run keyword in parallel with vector (only if multi-path enabled)
     const keywordPromise = (useMultiPath && isKeywordSearchAvailable())
@@ -369,9 +386,25 @@ memoryRouter.get('/search', async (req, res) => {
         })
       : Promise.resolve([]);
 
-    const [vectorResults, keywordResults] = await Promise.all([
-      vectorPromise, keywordPromise,
+    // Entity-graph third path (opt-in, GRAPH_RETRIEVAL_ENABLED) — additive,
+    // returns [] on any failure so it can never break search. Uses the RAW
+    // query: expansion synonyms would seed unrelated entities.
+    const graphPromise = (useMultiPath && GRAPH_RETRIEVAL_ENABLED)
+      ? graphCandidates(q, { clientId: client_id, type, limit: fetchLimit })
+      : Promise.resolve([]);
+
+    const [vectorResults, keywordResults, graphResults] = await Promise.all([
+      vectorPromise, keywordPromise, graphPromise,
     ]);
+
+    // Vector down and nothing else to answer from → honest 503, not empty 200.
+    if (vectorError && keywordResults.length === 0 && graphResults.length === 0) {
+      return res.status(503).json({
+        error: 'Search unavailable: vector search failed and keyword fallback could not satisfy the query',
+        query: q,
+        retrieval: { degraded: true, reason: 'vector_search_unavailable' },
+      });
+    }
 
     // --- Build candidate set ---
     // Candidates carry their retrieval provenance: simScore (null when found
@@ -381,14 +414,15 @@ memoryRouter.get('/search', async (req, res) => {
     let maxRrfScore = null;
     const retrievalSources = {};
 
-    if (useMultiPath && keywordResults.length > 0) {
-      // Build ranked lists for RRF (vector + keyword)
+    if (useMultiPath && (keywordResults.length > 0 || graphResults.length > 0)) {
+      // Build ranked lists for RRF (vector + keyword + optional graph)
       const rankedLists = [
         vectorResults.map(r => ({ id: r.id, source: 'vector' })),
         keywordResults.map(r => ({ id: r.memory_id, source: 'keyword' })),
+        graphResults.map(r => ({ id: r.id, source: 'graph' })),
       ];
 
-      const fused = reciprocalRankFusion(rankedLists);
+      const fused = reciprocalRankFusion(rankedLists, undefined, [...rrfWeights(), rrfGraphWeight()]);
       maxRrfScore = fused.length > 0 ? fused[0].rrf_score : null; // fused is sorted desc
 
       // Build payload map from vector results (already have full payloads)
@@ -449,9 +483,37 @@ memoryRouter.get('/search', async (req, res) => {
       return true;
     });
 
+    // --- Cross-encoder rerank (optional, RERANK_ENABLED) ---
+    // Re-scores the top of the fused pool by true query↔document relevance.
+    // The rerank score replaces the sim/RRF blend inside effectiveScore; the
+    // confidence/access/temporal/importance multipliers still apply. Trims to
+    // the rerank pool — candidates past it were losing on fused order anyway.
+    let reranked = false;
+    if (rerankOn && candidates.length > 1) {
+      const pool = candidates.slice(0, Math.max(maxResults, RERANK_POOL));
+      const out = await rerankMemories(q, pool, {
+        textOf: c => c.payload?.text_compressed || c.payload?.text || '',
+      });
+      if (out.some(r => r.rerank_score != null)) {
+        reranked = true;
+        candidates = out.map(c => ({
+          ...c,
+          // Raw cross-encoder logits map through a sigmoid to [0,1] so the
+          // ranking multipliers compose the same way they do with similarity.
+          rerankScore: c.rerank_score == null ? null
+            : (c.rerank_score >= 0 && c.rerank_score <= 1)
+              ? c.rerank_score
+              : 1 / (1 + Math.exp(-c.rerank_score)),
+        }));
+      } else {
+        candidates = pool; // reranker degraded — keep fused order
+      }
+    }
+
     // --- Ranking ---
-    // Blend fusion + similarity, multiply confidence decay / capped access
-    // boost / temporal proximity / importance (services/ranking.js).
+    // Blend fusion + similarity (or the rerank score when present), multiply
+    // confidence decay / capped access boost / temporal proximity / importance
+    // (services/ranking.js).
     const refDateForBoost = reference_date || at_time || null;
     for (const c of candidates) {
       const p = c.payload;
@@ -463,6 +525,7 @@ memoryRouter.get('/search', async (req, res) => {
         simScore: c.simScore,
         rrfScore: c.rrfScore,
         maxRrfScore,
+        rerankScore: c.rerankScore,
         effectiveConfidence: c.effectiveConfidence,
         accessCount: p.access_count,
         temporalBoost,
@@ -476,8 +539,10 @@ memoryRouter.get('/search', async (req, res) => {
     const top = diversified.slice(0, maxResults);
 
     // --- Format ---
+    // Shared by the main path and the broader-terms retry so both honor the
+    // requested format (the retry must not leak full payloads on compact/index).
     const COMPACT_MAX = 200;
-    const results = top.map(c => {
+    const formatCandidate = (c) => {
       const p = c.payload;
 
       // Index format — minimal tokens, IDs + one-line summary for progressive disclosure
@@ -524,7 +589,8 @@ memoryRouter.get('/search', async (req, res) => {
       }
 
       return base;
-    });
+    };
+    const results = top.map(formatCandidate);
 
     // Bump access_count + last_accessed_at for the returned results in one atomic
     // SQL statement (fire-and-forget — must not delay the search response).
@@ -534,28 +600,33 @@ memoryRouter.get('/search', async (req, res) => {
         .catch(e => console.error('[memory:search] Access count update failed:', e.message));
     }
 
-    // Retry with broader, keyword-only terms when the full query returned nothing.
-    if (results.length === 0 && searchQuery === q) {
+    // Retry with broader, keyword-only terms when the full query returned
+    // nothing. Skipped when the vector path is down — the retry re-embeds.
+    if (results.length === 0 && searchQuery === q && !vectorError) {
       const broader = extractSearchTerms(q);
       if (broader && broader.length > 3) {
         const retryVector = await embed(broader, 'search');
         const retryResults = await searchPoints(retryVector, filter, maxResults, nestedFilters, rangeFilters);
         if (retryResults.length > 0) {
-          const retryScored = retryResults.map(r => ({
-            result: r,
-            effective_score: effectiveScore({
+          const retryScored = retryResults.map(r => {
+            const effectiveConfidence = computeEffectiveConfidence(r.payload);
+            return {
+              id: r.id,
+              payload: r.payload,
               simScore: r.score,
-              rrfScore: null,
-              maxRrfScore: null,
-              effectiveConfidence: computeEffectiveConfidence(r.payload),
-              accessCount: r.payload.access_count,
-              importance: r.payload.importance,
-            }),
-          }));
+              effectiveConfidence,
+              effective_score: effectiveScore({
+                simScore: r.score,
+                rrfScore: null,
+                maxRrfScore: null,
+                effectiveConfidence,
+                accessCount: r.payload.access_count,
+                importance: r.payload.importance,
+              }),
+            };
+          });
           retryScored.sort((a, b) => b.effective_score - a.effective_score);
-          const retryFormatted = retryScored.slice(0, maxResults).map(({ result: r, effective_score }) => ({
-            id: r.id, score: r.score, effective_score, ...r.payload,
-          }));
+          const retryFormatted = retryScored.slice(0, maxResults).map(formatCandidate);
           return res.json({
             query: q, expanded_query: broader, count: retryFormatted.length, results: retryFormatted,
             retry: true,
@@ -577,11 +648,23 @@ memoryRouter.get('/search', async (req, res) => {
         paths: useMultiPath ? {
           vector: vectorResults.length,
           keyword: keywordResults.length,
+          ...(GRAPH_RETRIEVAL_ENABLED ? { graph: graphResults.length } : {}),
         } : { vector: vectorResults.length },
       };
+      if (rerankOn) response.retrieval.reranked = reranked;
       if (queryAnalysis.domain) response.retrieval.query_domain = queryAnalysis.domain;
       if (searchQuery !== q) response.retrieval.expanded_query = searchQuery;
       if (temporalResult.isTemporalQuery) response.retrieval.temporal = temporalResult;
+    }
+
+    // A degraded search must say so regardless of format — an empty-but-200
+    // response during a vector outage reads as "no memories exist".
+    if (vectorError) {
+      response.retrieval = {
+        ...(response.retrieval || {}),
+        degraded: true,
+        reason: 'vector_search_unavailable',
+      };
     }
 
     res.json(response);

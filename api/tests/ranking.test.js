@@ -69,6 +69,48 @@ describe('effectiveScore — fusion blend', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. effectiveScore — cross-encoder rerank
+// ---------------------------------------------------------------------------
+
+describe('effectiveScore — rerank score', () => {
+  it('a rerank score replaces the sim/RRF blend as the base', () => {
+    const score = effectiveScore({
+      simScore: 0.2, rrfScore: 0.005, maxRrfScore: 0.04, rerankScore: 0.9,
+      effectiveConfidence: 1, accessCount: 0, importance: 'critical',
+    });
+    assert.equal(score, 0.9);
+  });
+
+  it('multipliers still apply on top of the rerank score', () => {
+    const score = effectiveScore({
+      simScore: 0.2, rrfScore: null, maxRrfScore: null, rerankScore: 0.8,
+      effectiveConfidence: 0.5, accessCount: 0, importance: 'critical',
+    });
+    assert.equal(score, 0.4);
+  });
+
+  it('a rerank score of 0 is honored, not treated as missing', () => {
+    const score = effectiveScore({
+      simScore: 0.9, rrfScore: 0.04, maxRrfScore: 0.04, rerankScore: 0,
+      effectiveConfidence: 1, accessCount: 0, importance: 'critical',
+    });
+    assert.equal(score, 0);
+  });
+
+  it('null/undefined rerank score falls back to the blend', () => {
+    const withNull = effectiveScore({
+      simScore: 0.8, rrfScore: 0.02, maxRrfScore: 0.04, rerankScore: null,
+      effectiveConfidence: 1, accessCount: 0, importance: 'critical',
+    });
+    const without = effectiveScore({
+      simScore: 0.8, rrfScore: 0.02, maxRrfScore: 0.04,
+      effectiveConfidence: 1, accessCount: 0, importance: 'critical',
+    });
+    assert.equal(withNull, without);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. Multipliers
 // ---------------------------------------------------------------------------
 
