@@ -8,6 +8,7 @@ import {
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
+import { toolJson } from './response-format.js';
 
 const API_URL = process.env.BRAIN_API_URL || 'http://localhost:8084';
 const API_KEY = process.env.BRAIN_API_KEY;
@@ -16,6 +17,12 @@ const CONSOLIDATION_TIMEOUT = parseInt(process.env.BRAIN_MCP_CONSOLIDATION_TIMEO
 // Fleet identity: each agent sets BRAIN_MCP_SOURCE_AGENT so its writes are
 // correctly attributed (cross-agent corroboration + briefings depend on it).
 const DEFAULT_SOURCE_AGENT = process.env.BRAIN_MCP_SOURCE_AGENT || 'claude-code';
+// When set, a per-call source_agent argument is ignored and the env identity
+// always wins — an impersonation guard for shared multi-writer deployments.
+// Off by default: the public single-writer contract lets callers pass their own.
+const LOCK_SOURCE_AGENT = ['true', '1', 'yes', 'y', 'on'].includes(
+  String(process.env.BRAIN_MCP_LOCK_SOURCE_AGENT || '').trim().toLowerCase()
+);
 
 async function apiRequest(path, options = {}) {
   const url = `${API_URL}${path}`;
@@ -435,7 +442,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           body: JSON.stringify({
             type: args.type,
             content: args.content,
-            source_agent: args.source_agent || DEFAULT_SOURCE_AGENT,
+            source_agent: LOCK_SOURCE_AGENT ? DEFAULT_SOURCE_AGENT : (args.source_agent || DEFAULT_SOURCE_AGENT),
             client_id: args.client_id,
             category: args.category,
             importance: args.importance,
@@ -618,7 +625,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
 
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: 'text', text: toolJson(result) }] };
   } catch (err) {
     return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
   }

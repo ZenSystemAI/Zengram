@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { scrollPoints, getCollectionInfo, computeEffectiveConfidence } from '../services/pgvector.js';
-import { isInvalidIsoTimestampParam } from '../services/request-utils.js';
+import { isInvalidIsoTimestampParam, isInvalidStringParam } from '../services/request-utils.js';
+import { validateNoToolCallControlMarkup } from '../middleware/validate.js';
 import { logError } from '../lib/log.js';
 
 export const briefingRouter = Router();
@@ -16,6 +17,13 @@ briefingRouter.get('/', async (req, res) => {
   try {
     const { agent, since, include, limit: limitParam, format: formatParam } = req.query;
     const format = ['compact', 'summary', 'full'].includes(formatParam) ? formatParam : 'compact';
+
+    if (isInvalidStringParam(since)) return res.status(400).json({ error: 'since must be a string' });
+    if (isInvalidStringParam(agent)) return res.status(400).json({ error: 'agent must be a string' });
+    for (const [name, value] of Object.entries({ since, agent, include, limit: limitParam, format: formatParam })) {
+      const error = validateNoToolCallControlMarkup(value, name);
+      if (error) return res.status(400).json({ error });
+    }
 
     if (!since) {
       return res.status(400).json({

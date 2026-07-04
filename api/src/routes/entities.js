@@ -5,6 +5,13 @@ import {
 } from '../services/stores/interface.js';
 import { reclassifyEntity } from '../services/entities.js';
 import { batchUpdateEntityType } from '../services/pgvector.js';
+import { ENTITY_TYPE_VALUES, normalizeEntityType } from '../services/entity-utils.js';
+import {
+  boundedIntegerParam,
+  isInvalidIntegerParam,
+  isInvalidStringParam,
+} from '../services/request-utils.js';
+import { validateNoToolCallControlMarkup } from '../middleware/validate.js';
 import { logError } from '../lib/log.js';
 
 export const entitiesRouter = Router();
@@ -17,13 +24,37 @@ function requireEntityStore(res) {
   return false;
 }
 
+// Reject any field carrying tool-call control markup (prompt-injection payloads
+// that a downstream LLM reader could act on). Returns true after responding 400.
+function rejectToolCallControlMarkup(res, fields) {
+  for (const [name, value] of Object.entries(fields)) {
+    const error = validateNoToolCallControlMarkup(value, name);
+    if (error) {
+      res.status(400).json({ error });
+      return true;
+    }
+  }
+  return false;
+}
+
 // GET /entities — List all entities
 entitiesRouter.get('/', async (req, res) => {
   try {
     if (!requireEntityStore(res)) return;
 
     const { type: entityType, limit, offset } = req.query;
-    const result = await listEntities({ entity_type: entityType, limit, offset });
+    if (rejectToolCallControlMarkup(res, { type: entityType, limit, offset })) return;
+    const normalizedEntityType = normalizeEntityType(entityType);
+    if (entityType && !normalizedEntityType) {
+      return res.status(400).json({ error: `Invalid entity type: ${entityType}. Must be one of: ${ENTITY_TYPE_VALUES.join(', ')}` });
+    }
+    if (isInvalidIntegerParam(limit)) return res.status(400).json({ error: 'limit must be an integer' });
+    if (isInvalidIntegerParam(offset, { min: 0 })) return res.status(400).json({ error: 'offset must be a non-negative integer' });
+    const result = await listEntities({
+      entity_type: normalizedEntityType,
+      limit: boundedIntegerParam(limit, { defaultValue: 50, min: 1, max: 100 }),
+      offset: boundedIntegerParam(offset, { defaultValue: 0, min: 0 }),
+    });
 
     res.json({
       count: result.results.length,
@@ -55,22 +86,32 @@ entitiesRouter.post('/reclassify', async (req, res) => {
     if (!requireEntityStore(res)) return;
 
     const { reclassifications, dry_run } = req.body;
+    if (rejectToolCallControlMarkup(res, { dry_run })) return;
+    if (dry_run !== undefined && dry_run !== null && dry_run !== '' && typeof dry_run !== 'boolean') {
+      return res.status(400).json({ error: 'dry_run must be a boolean' });
+    }
     const isDryRun = dry_run !== false; // default true
 
     if (!Array.isArray(reclassifications) || reclassifications.length === 0) {
       return res.status(400).json({ error: 'reclassifications array is required and must not be empty' });
     }
 
-    const VALID_TYPES = ['client', 'person', 'system', 'service', 'domain', 'technology', 'workflow', 'agent'];
-
     // Validate all entries
     for (const entry of reclassifications) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return res.status(400).json({ error: 'Each reclassification must be an object' });
+      }
       if (!entry.name || typeof entry.name !== 'string') {
         return res.status(400).json({ error: `Each reclassification must have a "name" string` });
       }
-      if (!entry.new_type || !VALID_TYPES.includes(entry.new_type)) {
-        return res.status(400).json({ error: `Invalid new_type "${entry.new_type}" for "${entry.name}". Valid types: ${VALID_TYPES.join(', ')}` });
+      if (isInvalidStringParam(entry.current_type)) {
+        return res.status(400).json({ error: `current_type must be a string for "${entry.name}"` });
       }
+      const newType = normalizeEntityType(entry.new_type);
+      if (!newType) {
+        return res.status(400).json({ error: `Invalid new_type "${entry.new_type}" for "${entry.name}". Valid types: ${ENTITY_TYPE_VALUES.join(', ')}` });
+      }
+      entry.new_type = newType;
     }
 
     const results = [];
@@ -154,6 +195,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
 entitiesRouter.get('/:name', async (req, res) => {
   try {
     if (!requireEntityStore(res)) return;
+    if (rejectToolCallControlMarkup(res, { name: req.params.name })) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {
@@ -179,6 +221,7 @@ entitiesRouter.get('/:name', async (req, res) => {
 entitiesRouter.delete('/:name', async (req, res) => {
   try {
     if (!requireEntityStore(res)) return;
+    if (rejectToolCallControlMarkup(res, { name: req.params.name })) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {
@@ -213,6 +256,10 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
     if (!requireEntityStore(res)) return;
 
     const { merge_from } = req.body;
+    if (rejectToolCallControlMarkup(res, { name: req.params.name, merge_from })) return;
+    if (isInvalidStringParam(merge_from)) {
+      return res.status(400).json({ error: 'merge_from must be a string' });
+    }
     if (!merge_from) {
       return res.status(400).json({ error: 'merge_from is required (entity name to merge into this one)' });
     }
@@ -322,13 +369,15 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
 entitiesRouter.get('/:name/memories', async (req, res) => {
   try {
     if (!requireEntityStore(res)) return;
+    if (rejectToolCallControlMarkup(res, { name: req.params.name, limit: req.query.limit })) return;
 
     const entity = await findEntity(req.params.name);
     if (!entity) {
       return res.status(404).json({ error: 'Entity not found' });
     }
 
-    const limit = parseInt(req.query.limit) || 20;
+    if (isInvalidIntegerParam(req.query.limit)) return res.status(400).json({ error: 'limit must be an integer' });
+    const limit = boundedIntegerParam(req.query.limit, { defaultValue: 20, min: 1, max: 100 });
     const links = await getEntityMemories(entity.id, limit);
 
     res.json({

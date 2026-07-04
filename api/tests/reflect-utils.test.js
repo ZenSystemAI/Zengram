@@ -12,6 +12,20 @@ import {
 } from '../src/services/reflect-utils.js';
 
 describe('reflect-utils', () => {
+  it('strips a <think> preamble whose draft braces would fool the extractor', () => {
+    assert.equal(
+      extractReflectionJson('<think>draft { "wrong": 1 }</think>\n{"patterns":[]}'),
+      '{"patterns":[]}'
+    );
+  });
+
+  it('drops everything after an unclosed <think> (answer never arrived)', () => {
+    assert.equal(
+      extractReflectionJson('{"patterns":[]}\n<think>still reasoning { partial'),
+      '{"patterns":[]}'
+    );
+  });
+
   it('builds a no-memory reflection without implying retrieval failure', () => {
     const response = noRelevantMemoriesReflection('alpha shared brain', 'global');
     assert.equal(response.topic, 'alpha shared brain');

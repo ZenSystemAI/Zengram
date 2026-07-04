@@ -14,19 +14,24 @@ import { researchRouter } from './routes/research.js';
 import { collectionsRouter } from './routes/collections.js';
 import { initPgvector, ensureEntityIndex } from './services/pgvector.js';
 import { initEmbeddings, getEmbeddingDimensions } from './services/embedders/interface.js';
+import { initReranker } from './services/reranker/interface.js';
 import { initStore, isEntityStoreAvailable, loadAllAliases, _getStoreInstance } from './services/stores/interface.js';
 import { initKeywordSearch, getKeywordIndexCount } from './services/keyword-search.js';
 import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 import { loadAliasCache } from './services/entities.js';
+import { startupConfigIssues } from './services/config-utils.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandled-rejection]', reason);
 });
 
-// Validate required environment variables
-if (!process.env.BRAIN_API_KEY) {
-  console.error('[zengram] FATAL: BRAIN_API_KEY is required. Set it in .env or environment.');
+// Validate required environment variables. BRAIN_API_KEY presence + strength
+// (no whitespace, not a placeholder, min length) is checked in config-utils so
+// a weak key never silently gates a live API.
+const configIssues = startupConfigIssues(process.env);
+if (configIssues.length > 0) {
+  for (const issue of configIssues) console.error(`[zengram] FATAL: ${issue}`);
   process.exit(1);
 }
 
@@ -158,6 +163,10 @@ async function start() {
 
     await initStore();
     initKeywordSearch(_getStoreInstance());
+
+    // Optional cross-encoder rerank stage (RERANK_ENABLED). Probes the endpoint
+    // and degrades to fused order on failure — never blocks startup.
+    await initReranker();
 
     // Load entity alias cache for fast-path extraction. A clean empty database
     // just returns []; any real error (connection, schema drift) must be loud.

@@ -59,6 +59,12 @@ function extractBalancedObject(text) {
 
 export function extractConsolidationJson(responseText) {
   let jsonText = String(responseText ?? '').trim();
+  // Reasoning models (Qwen 3.x and similar) can leak <think> blocks ahead of
+  // the JSON; their contents often include draft braces that would fool
+  // extractBalancedObject. An unclosed <think> means the answer never came.
+  jsonText = jsonText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  const unclosedThink = jsonText.search(/<think>/i);
+  if (unclosedThink !== -1) jsonText = jsonText.slice(0, unclosedThink).trim();
   const fenceMatch = jsonText.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i);
   if (fenceMatch) jsonText = fenceMatch[1].trim();
   return extractBalancedObject(jsonText).trim();

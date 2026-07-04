@@ -7,8 +7,8 @@ import {
   isEntityStoreAvailable, createEntity, findEntity, linkEntityToMemory, createRelationship,
 } from '../services/stores/interface.js';
 import { scrubCredentials, scrubObject, contentHash as hashContent } from '../services/scrub.js';
-import { validateMemoryInput } from '../middleware/validate.js';
-import { requestHasOperatorApproval, isInvalidIsoTimestampParam } from '../services/request-utils.js';
+import { validateMemoryInput, validateNoToolCallControlMarkup } from '../middleware/validate.js';
+import { requestHasOperatorApproval, isInvalidIsoTimestampParam, isInvalidStringParam } from '../services/request-utils.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
 import { logError } from '../lib/log.js';
@@ -19,6 +19,12 @@ export const exportRouter = Router();
 exportRouter.get('/', async (req, res) => {
   try {
     const { client_id, type, since, active_only } = req.query;
+    if (isInvalidStringParam(client_id)) return res.status(400).json({ error: 'client_id must be a string' });
+    if (isInvalidStringParam(since)) return res.status(400).json({ error: 'since must be a string' });
+    for (const [name, value] of Object.entries({ client_id, type, since, active_only, limit: req.query.limit, offset: req.query.offset })) {
+      const error = validateNoToolCallControlMarkup(value, name);
+      if (error) return res.status(400).json({ error });
+    }
     if (isInvalidIsoTimestampParam(since)) {
       return res.status(400).json({
         error: 'Invalid since parameter — must be an ISO 8601 timestamp',

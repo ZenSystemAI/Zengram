@@ -26,6 +26,20 @@ describe('extractConsolidationJson', () => {
       '{"merged_facts":[{"content":"a {nested} value"}]}'
     );
   });
+
+  it('strips a <think> preamble whose draft braces would fool the extractor', () => {
+    assert.equal(
+      extractConsolidationJson('<think>let me draft { "wrong": true } first</think>\n{"merged_facts":[]}'),
+      '{"merged_facts":[]}'
+    );
+  });
+
+  it('drops everything after an unclosed <think> (answer never arrived)', () => {
+    assert.equal(
+      extractConsolidationJson('{"merged_facts":[]}\n<think>still reasoning { partial'),
+      '{"merged_facts":[]}'
+    );
+  });
 });
 
 describe('parseConsolidationResponse', () => {
