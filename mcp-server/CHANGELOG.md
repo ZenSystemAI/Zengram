@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.5.0 (2026-07-03)
+
+- **Response truncation** — tool responses above `BRAIN_MCP_MAX_RESPONSE_CHARS` (default 24000) now return a valid-JSON truncation envelope (`truncated: true`, original size, and a hint to retry with `format=index`/`compact` or a smaller `limit`) instead of dumping an arbitrarily large payload into the client's context window. Set `0` to disable for operator exports.
+- **`BRAIN_MCP_PRETTY_JSON`** — opt-in pretty-printed tool JSON (default stays compact: cheaper in tokens and safer for local-model tool-call parsers).
+- **`BRAIN_MCP_LOCK_SOURCE_AGENT`** (default off) — when enabled, the env-configured identity always wins and a `source_agent` passed in tool arguments is ignored. Impersonation guard for multi-writer fleets; the default preserves the existing contract.
+
 ## 4.4.0 (2026-07-03)
 
 - **MCP tool annotations** on all 13 tools (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint: false`) so clients can render and gate them by behaviour — read-only (search/query/briefing/stats/entities/export/reflect/research), non-destructive writes (store/update), destructive (delete/import), and non-idempotent (consolidate).

@@ -4,6 +4,44 @@ This changelog covers the entire Zengram project (API, MCP server, adapters, and
 
 This root file is the canonical changelog for the project. The `mcp-server/CHANGELOG.md` tracks only the published `@zensystemai/zengram-mcp` package history.
 
+## 4.5.0 (2026-07-03)
+
+Retrieval-stack release. Adds the three biggest precision/recall levers from our production deployment — a cross-encoder reranker stage, weighted RRF, and an entity-graph retrieval path — plus first-class self-hosted model support (local embedding endpoints, instruction prefixes, reasoning-model compatibility). Everything is gated and defaults to current behavior: with no new env vars set, search results are byte-identical to 4.4.0.
+
+### Cross-encoder reranker (`RERANK_ENABLED`, off by default)
+- New `services/reranker/` provider + generic HTTP client speaking the two standard `/rerank` shapes (TEI, and Cohere-compatible: Infinity / vLLM / Jina / Cohere / llama.cpp `--reranking`). Probes the endpoint at startup and degrades gracefully to fused order on any outage — a reranker failure can never make search worse than baseline.
+- Re-scores a deeper fused candidate pool (`RERANK_CANDIDATES`, default 40) after RRF in `/memory/search`, `/reflect`, and `/research`; the rerank score replaces the sim/RRF blend inside `effective_score` while confidence decay, capped access boost, temporal proximity, and importance still apply. The response `score` field stays honest vector similarity.
+- Client-side batch chunking (`RERANK_MAX_BATCH`, default 32) so servers that cap request batch size don't silently drop candidates.
+- Why first: on our private bilingual production corpus (765 active memories, 70 judge-paraphrased queries, one variable at a time), adding `bge-reranker-v2-m3` roughly doubled MRR (0.375 → 0.771) and lifted recall@5 to 1.0 over the dense+full-text baseline. Your corpus will differ — measure with the eval harness — but this is the single highest-leverage retrieval upgrade we know of.
+
+### Entity-graph retrieval (`GRAPH_RETRIEVAL_ENABLED`, off by default)
+- The write path has always maintained an entity graph (`entities`, `entity_memory_links`, co-occurrence `entity_relationships`); until now nothing read it at search time. New `services/graph-retrieval.js` extracts entities from the query (same dictionary/alias extractor as the write path — no LLM call), expands one hop over the co-occurrence graph weighted by normalized edge strength (`GRAPH_HOP_DECAY`, cap via `GRAPH_NEIGHBOR_LIMIT`), and feeds linked memories into RRF fusion as a weighted third list (`RRF_GRAPH_WEIGHT`, default 0.5).
+- Tenant-scoped and additive: graph candidates are client-filtered in SQL and the graph path returns empty on any error rather than breaking search.
+
+### Retrieval & ranking
+- **Weighted RRF**: `RRF_VECTOR_WEIGHT` / `RRF_KEYWORD_WEIGHT` bias fusion toward semantic or exact matches (default 1/1 = vanilla RRF, unchanged).
+- **Vector-outage resilience**: an embedding-backend failure now degrades `/memory/search` to the surviving paths (keyword/graph) with `retrieval.degraded: true` metadata instead of failing the request — and returns an honest 503 when nothing can answer, instead of an empty 200 that reads as "no memories exist".
+- **Opt-in multilingual full-text** (`BM25_TSCONFIG=zengram_multi`): a managed accent-folding text-search config (`unaccent` + `simple`) for mixed-language corpora, with self-healing one-time reindex when the config changes (tracked in a `zengram_meta` row). The default stays `english` — accent folding trades away English stemming, so English-only deployments should not switch.
+
+### Self-hosted models
+- **Local embedding endpoints**: `OPENAI_BASE_URL` points the `openai` embedding provider at vLLM / Infinity / TEI / llama.cpp; the `dimensions` request param is now sent only when explicitly configured (local servers reject unexpected params), with the native dimensionality probed at startup.
+- **Instruction prefixes**: `EMBED_QUERY_PREFIX` / `EMBED_DOC_PREFIX` for instruction-aware encoders (qwen3-embedding, e5, gte) — applied asymmetrically (query side on search, doc side on store), with `\n`/`\t` escapes decoded so multi-line instructions survive env files. Instruction-tuned encoders can score *below* older models without their prefix — set it.
+- **Re-embed tooling**: `api/scripts/reembed.js` re-embeds a corpus in place for an encoder swap, including a dimensionality change (drops HNSW → re-types the column → re-embeds → rebuilds). Dry-run by default.
+- **Reasoning-model compatibility**: `<think>` blocks leaked by self-hosted reasoning models are stripped before JSON extraction in consolidation and reflect (an unclosed `<think>` is also handled), and `LLM_CHAT_TEMPLATE_KWARGS` (e.g. `{"enable_thinking": false}`) is forwarded to OpenAI-compatible servers to disable thinking at the source. `OPENAI_BASE_URL` is honored by the LLM provider as well.
+
+### MCP server
+- **Response truncation**: tool responses above `BRAIN_MCP_MAX_RESPONSE_CHARS` (default 24000) return a valid-JSON truncation envelope suggesting `format=index`/`compact` retries, instead of blowing the client's context window. `BRAIN_MCP_PRETTY_JSON` toggles pretty-printing (default compact).
+- **Identity lock** (`BRAIN_MCP_LOCK_SOURCE_AGENT`, off by default): when enabled, the env-configured `source_agent` always wins over tool-call arguments — an impersonation guard for multi-writer setups. The default keeps the existing public contract (args may override).
+
+### Hardening
+- Startup config validation: placeholder API keys (including the `.env.example` default), sub-16-char keys, and whitespace-padded keys now fail fast with actionable errors instead of running "protected" by a guessable credential.
+- Route input hardening on `/entities`, `/briefing`, and `/export`: tool-call control-markup rejection and bounded integer params, reusing the existing `request-utils` validators.
+- `knowledge_category` filtering restored in structured-store queries (`/memory/query`).
+- New `api/scripts/dedupe-entities.js`: transactional duplicate-entity merge (links, relationships, aliases retargeted to the highest-mention winner), dry-run by default.
+
+### Tests
+- 343 tests (was 287): reranker HTTP client + chunking, weighted RRF, graph retrieval, rerank-score ranking composition, embed prefixes, BM25 config, `<think>` stripping, MCP truncation, config validation, and route-hardening suites.
+
 ## 4.4.0 (2026-07-03)
 
 Correctness + retrieval-quality release. Restores true multi-agent identity (the headline feature actually works again), overhauls the search ranking so hybrid fusion is used instead of discarded, fixes a cross-tenant supersede bug, and hardens the LLM/consolidation pipeline, temporal resolution, Docker deployment, and MCP surface. One breaking default for Gemini deployments — see Breaking.

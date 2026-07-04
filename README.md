@@ -59,12 +59,15 @@ Every memory lives in a single Postgres database: **pgvector** (HNSW) for semant
 
 ### Multi-Path Search
 
-Search runs two retrieval paths in parallel, fused with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf):
+Search runs up to three retrieval paths in parallel, fused with [weighted Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf):
 
 1. **Vector search** — Cosine similarity via pgvector (HNSW, with iterative index scans on pgvector 0.8+ so tenant-scoped queries don't lose recall)
-2. **Full-text search** — Postgres tsvector (`websearch_to_tsquery` + `ts_rank_cd`)
+2. **Full-text search** — Postgres tsvector (`websearch_to_tsquery` + `ts_rank_cd`), with an opt-in accent-folding config for mixed-language corpora (`BM25_TSCONFIG=zengram_multi`)
+3. **Entity graph** (opt-in) — entities in the query expand one hop over the co-occurrence graph the write path already maintains, pulling in associatively-related memories (`GRAPH_RETRIEVAL_ENABLED`)
 
-Final ranking blends the fused RRF signal with vector similarity, then weights confidence decay, access frequency (capped), temporal proximity, and importance — items found by both paths genuinely rank higher. **98.4% retrieval accuracy** on LongMemEval.
+An optional **cross-encoder reranker** (`RERANK_ENABLED`) then re-scores the fused pool by reading query and document together — the highest-leverage precision upgrade in the stack (on our private bilingual production corpus it roughly doubled MRR; measure yours with the eval harness). Works with any TEI / Infinity / vLLM / Jina / Cohere-style `/rerank` endpoint and degrades gracefully to fused order on outage.
+
+Final ranking blends the fused RRF signal with vector similarity (or the rerank score when enabled), then weights confidence decay, access frequency (capped), temporal proximity, and importance — items found by multiple paths genuinely rank higher. **98.4% retrieval accuracy** on LongMemEval.
 
 ### Built for Multi-Agent
 
@@ -180,7 +183,7 @@ Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to y
 
 ## Roadmap
 
-**Recently shipped**: agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity, multi-path RRF search (vector + BM25) — [full changelog](CHANGELOG.md)
+**Recently shipped**: cross-encoder reranking stage, entity-graph retrieval path, weighted RRF, self-hosted encoder support (local endpoints + instruction prefixes + in-place re-embed), agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity — [full changelog](CHANGELOG.md)
 
 **Coming next**: Automatic memory capture, hosted docs, LangChain/LlamaIndex integration
 

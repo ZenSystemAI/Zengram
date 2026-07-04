@@ -1,6 +1,6 @@
 {
   "name": "@zensystemai/zengram-mcp",
-  "version": "4.4.0",
+  "version": "4.5.0",
   "type": "module",
   "description": "Persistent memory for AI agents — pgvector + BM25 keyword search with RRF fusion, credential scrubbing, auto-consolidation.",
   "main": "src/index.js",
