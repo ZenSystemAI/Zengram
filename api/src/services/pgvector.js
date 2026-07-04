@@ -281,7 +281,11 @@ export async function supersedeAndInsert(keyField, keyValue, newId, vector, payl
         [supersededId, JSON.stringify({ active: false, ...supersedeFields }), col]
       );
     }
-    // Insert the new active row inside the same transaction (mirror upsertPoint's columns).
+    // Insert the new active row inside the same transaction (mirror upsertPoint's
+    // columns). payload.supersedes is overwritten with the id found UNDER the
+    // lock — the caller's pre-lock read can be stale when two same-key writes
+    // race, and a stale pointer breaks the supersession lineage.
+    const storedPayload = { ...payload, supersedes: supersededId };
     await client.query(
       `INSERT INTO memories (
         id, vector, type, source_agent, client_id, content_hash,
@@ -300,7 +304,7 @@ export async function supersedeAndInsert(keyField, keyValue, newId, vector, payl
         payload.active !== false, payload.consolidated === true,
         payload.importance || 'medium', payload.confidence ?? 1.0,
         payload.access_count || 0, payload.created_at || new Date().toISOString(),
-        payload.last_accessed_at || null, payload, col,
+        payload.last_accessed_at || null, storedPayload, col,
       ]
     );
     await client.query('COMMIT');
