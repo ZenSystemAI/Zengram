@@ -1,0 +1,30 @@
+{
+  "strictness": 2,
+  "commentTypes": [
+    "logic",
+    "syntax"
+  ],
+  "labels": [
+    "review:deep"
+  ],
+  "includeAuthors": [
+    "zen-agents[bot]",
+    "zenagents-el[bot]"
+  ],
+  "excludeAuthors": [
+    "dependabot[bot]",
+    "renovate[bot]",
+    "github-actions[bot]",
+    "pre-commit-ci[bot]",
+    "allcontributors[bot]",
+    "coderabbitai[bot]"
+  ],
+  "triggerOnUpdates": false,
+  "statusCheck": true,
+  "fileChangeLimit": 100,
+  "ignorePatterns": "**/package-lock.json\n**/pnpm-lock.yaml\ndist/**\n.next/**\nnode_modules/**",
+  "shouldUpdateDescription": false,
+  "autoApprove": {
+    "enabled": false
+  }
+}
