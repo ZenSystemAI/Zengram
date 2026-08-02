@@ -19,7 +19,7 @@
   "dependencies": {
     "express": "^5.0.0",
     "node-cron": "^4.2.1",
-    "openai": "^4.73.0",
+    "openai": "^7.0.0",
     "pg": "^8.13.0"
   }
 }
