@@ -2,7 +2,7 @@
   "name": "@zensystemai/zengram-mcp",
   "version": "4.5.0",
   "type": "module",
-  "description": "Persistent memory for AI agents — pgvector + BM25 keyword search with RRF fusion, credential scrubbing, auto-consolidation.",
+  "description": "Persistent memory for AI agents \u2014 pgvector + BM25 keyword search with RRF fusion, credential scrubbing, auto-consolidation.",
   "main": "src/index.js",
   "bin": {
     "zengram-mcp": "src/index.js"
@@ -47,5 +47,9 @@
   "homepage": "https://github.com/ZenSystemAI/Zengram",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.5",
+    "body-parser": "2.3.0"
   }
 }
