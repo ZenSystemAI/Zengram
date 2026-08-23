@@ -1,17 +1,38 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { errorSummary, logError } from '../src/lib/log.js';
 
+function expectedFingerprint(err) {
+  return crypto
+    .createHash('sha256')
+    .update(err.name)
+    .update('\0')
+    .update(String(err.code ?? ''))
+    .update('\0')
+    .update(err.message)
+    .digest('hex')
+    .slice(0, 12);
+}
+
 describe('errorSummary', () => {
-  it('omits Error.message so DSNs and API keys never reach logs', () => {
+  it('returns a hash fingerprint and never the Error.message', () => {
     const err = new Error('password=hunter2 postgres://user:secret@localhost:5432/zengram');
     err.name = 'error';
     err.code = 'ECONNREFUSED';
     const summary = errorSummary(err);
-    assert.equal(summary, 'error ECONNREFUSED');
+    assert.equal(summary, expectedFingerprint(err));
+    assert.match(summary, /^[0-9a-f]{12}$/);
     assert.equal(summary.includes('secret'), false);
     assert.equal(summary.includes('hunter2'), false);
     assert.equal(summary.includes('postgres://'), false);
+    assert.equal(summary.includes('ECONNREFUSED'), false);
+  });
+
+  it('is stable for the same error', () => {
+    const err = new Error('same');
+    err.code = 'ETIMEDOUT';
+    assert.equal(errorSummary(err), errorSummary(err));
   });
 
   it('does not echo a raw string (callers must pass the Error, not err.message)', () => {
@@ -25,7 +46,7 @@ describe('errorSummary', () => {
 });
 
 describe('logError', () => {
-  it('uses a constant format string and does not print the error message', () => {
+  it('uses a constant format string and logs only the fingerprint', () => {
     const logged = [];
     const original = console.error;
     console.error = (...args) => { logged.push(args); };
@@ -41,6 +62,7 @@ describe('logError', () => {
     assert.equal(fmt, '[%s] %s %s');
     assert.equal(id, '%s%s%s injected');
     assert.equal(tag, '[test]');
-    assert.equal(summary, 'Error 28P01');
+    assert.match(summary, /^[0-9a-f]{12}$/);
+    assert.equal(String(summary).includes('hunter2'), false);
   });
 });

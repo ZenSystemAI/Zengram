@@ -34,7 +34,7 @@ export class GeminiEmbedder {
   }
 
   async embed(text, purpose) {
-    const url = `${this.baseUrl}/models/${this.model}:embedContent?key=${this.apiKey}`;
+    const url = `${this.baseUrl}/models/${this.model}:embedContent`;
 
     const body = {
       model: `models/${this.model}`,
@@ -50,7 +50,10 @@ export class GeminiEmbedder {
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
       body: JSON.stringify(body),
     }, 60000);
 

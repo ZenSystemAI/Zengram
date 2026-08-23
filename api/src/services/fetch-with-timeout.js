@@ -12,7 +12,9 @@ export default async function fetchWithTimeout(url, options = {}, timeoutMs = 30
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error(`Request timed out after ${timeoutMs}ms: ${options.method || 'GET'} ${url}`);
+      // Do not interpolate `url` — callers (Gemini) historically put API keys
+      // in the query string, and the timeout Error is logged upstream.
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
