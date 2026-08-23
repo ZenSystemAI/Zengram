@@ -147,7 +147,7 @@ reflectRouter.post('/', async (req, res) => {
       llm: getLLMInfo(),
     });
   } catch (err) {
-    logError(req, '[reflect]', err.message);
+    logError(req, '[reflect]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

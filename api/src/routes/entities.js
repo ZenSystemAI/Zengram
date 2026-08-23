@@ -12,7 +12,7 @@ import {
   isInvalidStringParam,
 } from '../services/request-utils.js';
 import { validateNoToolCallControlMarkup } from '../middleware/validate.js';
-import { logError } from '../lib/log.js';
+import { logError, errorSummary } from '../lib/log.js';
 
 export const entitiesRouter = Router();
 
@@ -61,7 +61,7 @@ entitiesRouter.get('/', async (req, res) => {
       entities: result.results,
     });
   } catch (err) {
-    logError(req, '[entities]', err.message);
+    logError(req, '[entities]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -75,7 +75,7 @@ entitiesRouter.get('/stats', async (req, res) => {
     const stats = await getEntityStats();
     res.json(stats);
   } catch (err) {
-    logError(req, '[entities:stats]', err.message);
+    logError(req, '[entities:stats]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -160,7 +160,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
         try {
           vectorResult = await batchUpdateEntityType(entity.canonical_name, oldType, entry.new_type);
         } catch (err) {
-          console.error(`[entities:reclassify] Vector payload update failed for "${entry.name}":`, err.message);
+          console.error('[entities:reclassify] Vector payload update failed for %s: %s', entry.name, errorSummary(err));
         }
 
         results.push({
@@ -186,7 +186,7 @@ entitiesRouter.post('/reclassify', async (req, res) => {
       dry_run: isDryRun,
     });
   } catch (err) {
-    logError(req, '[entities:reclassify]', err.message);
+    logError(req, '[entities:reclassify]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -212,7 +212,7 @@ entitiesRouter.get('/:name', async (req, res) => {
       aliases: entity.aliases || [],
     });
   } catch (err) {
-    logError(req, '[entities:get]', err.message);
+    logError(req, '[entities:get]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -245,7 +245,7 @@ entitiesRouter.delete('/:name', async (req, res) => {
       id: entity.id,
     });
   } catch (err) {
-    logError(req, '[entities:delete]', err.message);
+    logError(req, '[entities:delete]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -360,7 +360,7 @@ entitiesRouter.post('/:name/merge', async (req, res) => {
       alias_created: secondary.canonical_name,
     });
   } catch (err) {
-    logError(req, '[entities:merge]', err.message);
+    logError(req, '[entities:merge]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -387,7 +387,7 @@ entitiesRouter.get('/:name/memories', async (req, res) => {
       memory_links: links.results,
     });
   } catch (err) {
-    logError(req, '[entities:memories]', err.message);
+    logError(req, '[entities:memories]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

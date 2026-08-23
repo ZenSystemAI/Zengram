@@ -16,6 +16,7 @@ import {
   resolveContradiction, selectBacklog, mergeConnections,
 } from './consolidation-utils.js';
 import { isLlmTruncationError } from './llm/retry.js';
+import { errorSummary } from '../lib/log.js';
 
 const CONSOLIDATION_MAX_MEMORIES = parseInt(process.env.CONSOLIDATION_MAX_MEMORIES) || 500;
 
@@ -148,16 +149,16 @@ export async function runConsolidation() {
           const ids = batch.map(p => p.id);
           await updatePointPayload(ids, { consolidated: true, consolidated_at: new Date().toISOString() });
         } catch (err) {
-          errors.push({ client_id: clientId, batch_start: i, error: err.message });
+          errors.push({ client_id: clientId, batch_start: i, error: errorSummary(err) });
           if (isLlmTruncationError(err)) {
             // Batch response hit the token ceiling. Left unmarked; a smaller
             // effective batch or higher LLM_MAX_TOKENS is needed to clear it.
-            console.error(`[consolidation] Batch for ${clientId} truncated at token limit (${batch.length} memories) — left unconsolidated`);
+            console.error('[consolidation] Batch for %s truncated at token limit (%s memories) — left unconsolidated', clientId, batch.length);
           } else if (isLlmOutputError(err)) {
             // Leave the batch unmarked so the next consolidation run retries it.
-            console.error(`[consolidation] Batch for ${clientId} left unconsolidated due to LLM JSON error`);
+            console.error('[consolidation] Batch for %s left unconsolidated due to LLM JSON error', clientId);
           } else {
-            console.error(`[consolidation] Batch error for ${clientId}:`, err.message);
+            console.error('[consolidation] Batch error for %s: %s', clientId, errorSummary(err));
           }
         }
       }

@@ -33,7 +33,7 @@ collectionsRouter.get('/', async (req, res) => {
 
     res.json({ collections: merged });
   } catch (err) {
-    logError(req, '[collections:list]', err.message);
+    logError(req, '[collections:list]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -65,7 +65,7 @@ collectionsRouter.post('/', async (req, res) => {
       created_at: new Date().toISOString(),
     });
   } catch (err) {
-    logError(req, '[collections:create]', err.message);
+    logError(req, '[collections:create]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -80,7 +80,7 @@ collectionsRouter.get('/:name', async (req, res) => {
     }
     res.json({ name: collectionName, ...info });
   } catch (err) {
-    logError(req, '[collections:get]', err.message);
+    logError(req, '[collections:get]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -110,7 +110,7 @@ collectionsRouter.delete('/:name', async (req, res) => {
 
     res.json({ deleted: true, name: collectionName });
   } catch (err) {
-    logError(req, '[collections:delete]', err.message);
+    logError(req, '[collections:delete]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

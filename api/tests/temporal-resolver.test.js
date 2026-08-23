@@ -151,6 +151,12 @@ describe('resolveTemporalQuery — relative_ago / last_period / named_month', ()
     assert.ok(new Date(r.dateFrom) < new Date(REF));
   });
 
+  it('"3  days  ago" with extra spaces still resolves (bounded whitespace, not ReDoS-prone +)', () => {
+    const r = resolveTemporalQuery('the bug from 3  days  ago', REF);
+    assert.equal(r.temporalPattern, 'relative_ago');
+    assert.ok(new Date(r.dateTo) > new Date(r.dateFrom));
+  });
+
   it('"2 weeks ago" → relative_ago with a non-empty window', () => {
     const r = resolveTemporalQuery('that meeting 2 weeks ago', REF);
     assert.equal(r.temporalPattern, 'relative_ago');

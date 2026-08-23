@@ -11,7 +11,7 @@ import { validateMemoryInput, validateNoToolCallControlMarkup } from '../middlew
 import { requestHasOperatorApproval, isInvalidIsoTimestampParam, isInvalidStringParam } from '../services/request-utils.js';
 import { extractEntities, linkExtractedEntities } from '../services/entities.js';
 import { isKeywordSearchAvailable, indexMemory } from '../services/keyword-search.js';
-import { logError } from '../lib/log.js';
+import { logError, errorSummary } from '../lib/log.js';
 
 export const exportRouter = Router();
 
@@ -106,7 +106,7 @@ exportRouter.get('/', async (req, res) => {
       filters: { client_id, type, since, active_only: active_only !== 'false' },
     });
   } catch (err) {
-    logError(req, '[export]', err.message);
+    logError(req, '[export]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -290,7 +290,7 @@ exportRouter.post('/import', async (req, res) => {
 
           imported++;
         } catch (recordErr) {
-          console.error('[import] Record error:', recordErr.message);
+          console.error('[import] Record error: %s', errorSummary(recordErr));
           errors++;
         }
       }
@@ -298,7 +298,7 @@ exportRouter.post('/import', async (req, res) => {
 
     res.json({ imported, skipped, errors });
   } catch (err) {
-    logError(req, '[import]', err.message);
+    logError(req, '[import]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

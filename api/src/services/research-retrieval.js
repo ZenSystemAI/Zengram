@@ -10,6 +10,7 @@ import { isKeywordSearchAvailable, keywordSearch } from './keyword-search.js';
 import { reciprocalRankFusion, rrfWeights } from './rrf.js';
 import { isRerankAvailable, rerankMemories } from './reranker/interface.js';
 import { extractSearchTerms } from './query-expander.js';
+import { errorSummary } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false';
 
@@ -64,13 +65,13 @@ export async function retrieveAndFuse({ queryText, filter = { active: true }, ma
     .then(vector => searchPoints(vector, filter, fetchLimit))
     .catch(e => {
       vectorError = e;
-      console.warn('[retrieve] Vector path unavailable; attempting keyword fallback:', e.message);
+      console.warn('[retrieve] Vector path unavailable; attempting keyword fallback: %s', errorSummary(e));
       return [];
     });
 
   const keywordPromise = (multiPath && isKeywordSearchAvailable())
     ? keywordSearch(queryText, filter, fetchLimit).catch(e => {
-        console.error('[retrieve:keyword-search]', e.message);
+        console.error('[retrieve:keyword-search] %s', errorSummary(e));
         return [];
       })
     : Promise.resolve([]);
@@ -83,7 +84,7 @@ export async function retrieveAndFuse({ queryText, filter = { active: true }, ma
     if (broader && broader.length > 3 && broader !== queryText.toLowerCase()) {
       degradedKeywordQuery = broader;
       keywordResults = await keywordSearch(broader, filter, fetchLimit).catch(e => {
-        console.error('[retrieve:keyword-search:fallback]', e.message);
+        console.error('[retrieve:keyword-search:fallback] %s', errorSummary(e));
         return [];
       });
     }
@@ -107,7 +108,7 @@ export async function retrieveAndFuse({ queryText, filter = { active: true }, ma
           payloadMap.set(pt.id, { id: pt.id, score: 0, payload: pt.payload });
         }
       } catch (e) {
-        console.error('[retrieve] Batch fetch failed:', e.message);
+        console.error('[retrieve] Batch fetch failed: %s', errorSummary(e));
       }
     }
 

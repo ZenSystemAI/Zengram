@@ -22,7 +22,7 @@ import { scoreRelevance, relevancePayloadFields } from '../services/relevance-sc
 import { resolveTemporalQuery, temporalProximityBoost } from '../services/temporal-resolver.js';
 import { analyzeQuery, expandQuery, extractSearchTerms } from '../services/query-expander.js';
 import { truthyParam, falseyParam } from '../services/request-utils.js';
-import { logError } from '../lib/log.js';
+import { logError, errorSummary } from '../lib/log.js';
 
 const MULTI_PATH_SEARCH = process.env.MULTI_PATH_SEARCH !== 'false'; // default: true
 
@@ -285,7 +285,7 @@ memoryRouter.post('/', async (req, res) => {
       ...(keyWarning ? { warning: keyWarning } : {}),
     });
   } catch (err) {
-    logError(req, '[memory:store]', err.message);
+    logError(req, '[memory:store]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -374,7 +374,7 @@ memoryRouter.get('/search', async (req, res) => {
       .then(vector => searchPoints(vector, filter, fetchLimit, nestedFilters, rangeFilters))
       .catch(e => {
         vectorError = e;
-        console.error('[memory:search] Vector path failed:', e.message);
+        console.error('[memory:search] Vector path failed: %s', errorSummary(e));
         return [];
       });
 
@@ -669,7 +669,7 @@ memoryRouter.get('/search', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    logError(req, '[memory:search]', err.message);
+    logError(req, '[memory:search]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -707,7 +707,7 @@ memoryRouter.get('/query', async (req, res) => {
       results: results.results || [],
     });
   } catch (err) {
-    logError(req, '[memory:query]', err.message);
+    logError(req, '[memory:query]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -804,7 +804,7 @@ memoryRouter.patch('/:id', async (req, res) => {
       updated_fields: Object.keys(updatedPayload).filter(k => k !== 'updated_at'),
     });
   } catch (err) {
-    logError(req, '[memory:update]', err.message);
+    logError(req, '[memory:update]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -839,7 +839,7 @@ memoryRouter.delete('/:id', async (req, res) => {
       deleted_at: now,
     });
   } catch (err) {
-    logError(req, '[memory:delete]', err.message);
+    logError(req, '[memory:delete]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

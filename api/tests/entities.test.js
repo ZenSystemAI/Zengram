@@ -83,9 +83,9 @@ describe('extractEntities — domains', () => {
     const text = 'Deployed to localagency.ca and checked acme-corp.com';
     const entities = extractEntities(text, 'global', 'test');
     const domains = entities.filter(e => e.type === 'domain');
-    const names = domains.map(e => e.name);
-    assert.ok(names.includes('localagency.ca'));
-    assert.ok(names.includes('acme-corp.com'));
+    const names = new Set(domains.map(e => e.name));
+    assert.ok(names.has('localagency.ca'));
+    assert.ok(names.has('acme-corp.com'));
   });
 
   it('handles various TLDs', () => {

@@ -21,6 +21,7 @@ import { initLLM } from './services/llm/interface.js';
 import { runConsolidation } from './services/consolidation.js';
 import { loadAliasCache } from './services/entities.js';
 import { startupConfigIssues } from './services/config-utils.js';
+import { errorSummary } from './lib/log.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandled-rejection]', reason);
@@ -205,7 +206,7 @@ async function start() {
               const result = await runConsolidation();
               console.log(`[consolidation] Complete: ${result.memories_processed} memories processed`);
             } catch (err) {
-              console.error('[consolidation] Scheduled run failed:', err.message);
+              console.error('[consolidation] Scheduled run failed: %s', errorSummary(err));
             }
           });
           console.log(`[zengram] Consolidation scheduled: ${interval} (gated at ${minCorpus} memories)`);
@@ -243,7 +244,7 @@ async function start() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
-    console.error('[zengram] Failed to start:', err.message);
+    console.error('[zengram] Failed to start: %s', errorSummary(err));
     process.exit(1);
   }
 }

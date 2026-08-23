@@ -23,6 +23,7 @@
 
 import pg from 'pg';
 import { initEmbeddings, embed, getEmbeddingDimensions } from '../src/services/embedders/interface.js';
+import { errorSummary } from '../src/lib/log.js';
 
 const COMMIT = process.argv.includes('--commit');
 const argVal = (name, dflt) => {
@@ -60,7 +61,7 @@ async function main() {
   console.log(`[reembed] Provider: ${process.env.EMBEDDING_PROVIDER || 'openai'}, target dims: ${targetDims}`);
 
   const pool = new pg.Pool({ connectionString: POSTGRES_URL });
-  pool.on('error', (e) => console.error('[reembed] idle client error:', e.message));
+  pool.on('error', (e) => console.error('[reembed] idle client error: %s', errorSummary(e)));
 
   const existingDims = await currentColumnDims(pool);
   const dimsChange = existingDims != null && existingDims !== targetDims;
@@ -108,8 +109,8 @@ async function main() {
         if (done % 50 === 0) console.log(`[reembed] ${done}/${withText.length} re-embedded…`);
       } catch (e) {
         failed++;
-        failures.push({ id: row.id, error: e.message });
-        console.error(`[reembed] FAILED ${row.id}: ${e.message}`);
+        failures.push({ id: row.id, error: errorSummary(e) });
+        console.error('[reembed] FAILED %s: %s', row.id, errorSummary(e));
       }
     }
   }
@@ -130,4 +131,4 @@ async function main() {
   await pool.end();
 }
 
-main().catch((e) => { console.error('[reembed] fatal:', e); process.exit(1); });
+main().catch((e) => { console.error('[reembed] fatal: %s', errorSummary(e)); process.exit(1); });

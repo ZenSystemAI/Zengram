@@ -105,7 +105,10 @@ export function resolveTemporalQuery(query, referenceDate) {
   }
 
   // "X days/weeks/months/years ago"
-  const agoMatch = !temporalPattern && q.match(/(\d+)\s+(day|week|month|year)s?\s+ago/i);
+  // Bound the digit and whitespace repetitions. The previous `\d+\s+...\s+`
+  // form is quadratic in the length of a space-padded query (CodeQL
+  // js/polynomial-redos) and search `q` is caller-controlled.
+  const agoMatch = !temporalPattern && q.match(/\b(\d{1,5})\s{1,8}(day|week|month|year)s?\s{1,8}ago\b/);
   if (agoMatch) {
     const amount = parseInt(agoMatch[1]);
     const unit = agoMatch[2];
