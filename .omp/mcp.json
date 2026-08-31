@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "motion": {
+      "enabled": false
+    },
+    "shadcn": {
+      "enabled": false
+    },
+    "shaders": {
+      "enabled": false
+    },
+    "refero": {
+      "enabled": false
+    },
+    "rivemcp": {
+      "enabled": false
+    },
+    "getillustrations": {
+      "enabled": false
+    },
+    "threeui": {
+      "enabled": false
+    },
+    "paper": {
+      "enabled": false
+    },
+    "originkit": {
+      "enabled": false
+    },
+    "agent-image": {
+      "enabled": false
+    },
+    "mcp-hub": {
+      "enabled": false
+    },
+    "semgrep": {
+      "command": "/home/steven/.omp/agent/bin/omp-semgrep-mcp"
+    }
+  }
+}
