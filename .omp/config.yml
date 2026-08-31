@@ -1,6 +1,5 @@
 skills:
   includeSkills:
-    - ask-matt
     - codebase-design
     - computer-use
     - convert-documents-to-markdown
@@ -27,7 +26,6 @@ skills:
     - research
     - resolving-merge-conflicts
     - sessionend
-    - setup-matt-pocock-skills
     - shared-brain
     - tdd
     - teach
