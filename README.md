@@ -183,6 +183,8 @@ Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to y
 
 ## Roadmap
 
+Changing embedding models on a live corpus? [Build a replacement beside the active vectors with Ptah](docs/embedding-generations.md), then deploy the matching encoder and column after verification.
+
 **Recently shipped**: cross-encoder reranking stage, entity-graph retrieval path, weighted RRF, self-hosted encoder support (local endpoints + instruction prefixes + in-place re-embed), agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity — [full changelog](CHANGELOG.md)
 
 **Coming next**: Automatic memory capture, hosted docs, LangChain/LlamaIndex integration
