@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  embeddingColumn,
   parseVectorVersion,
   supportsIterativeScan,
   clampEfSearch,
@@ -110,5 +111,22 @@ describe('dimsGuardShouldExit', () => {
     assert.equal(dimsGuardShouldExit(-1, 1536), false);
     assert.equal(dimsGuardShouldExit(null, 1536), false);
     assert.equal(dimsGuardShouldExit(undefined, 1536), false);
+  });
+});
+
+// A column cannot be a bind parameter: reject SQL and unrelated payload columns.
+describe('embeddingColumn', () => {
+  it('keeps the default and accepts candidate names', () => {
+    assert.equal(embeddingColumn(), 'vector');
+    assert.equal(embeddingColumn('embedding_v2'), 'embedding_v2');
+    assert.equal(vectorDistanceExpr('vector', 384, '$1', 'embedding_v2'),
+      'embedding_v2 <=> $1::vector');
+    assert.equal(vectorDistanceExpr('halfvec', 3072, '$1', 'embedding_v2'),
+      '(embedding_v2::halfvec(3072)) <=> $1::halfvec(3072)');
+  });
+  it('rejects empty, unrelated, oversized, and SQL names', () => {
+    for (const column of ['', 'payload', 'embedding_V2', 'embedding_x; DROP TABLE memories', 'embedding_' + 'x'.repeat(54)]) {
+      assert.throws(() => embeddingColumn(column), /PGVECTOR_COLUMN/);
+    }
   });
 });
