@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "name": "zengram-memories-v2",
+  "source": {
+    "schema": "public",
+    "table": "memories",
+    "key_fields": ["id"],
+    "input_fields": ["embedding_text"],
+    "version_strategy": "input_hash",
+    "mutable": true
+  },
+  "preprocessing": {
+    "prefix": "",
+    "null_policy": "empty",
+    "empty_policy": "skip",
+    "unicode_normalization": "none",
+    "truncate": "refuse"
+  },
+  "model": {
+    "provider": "openai-compatible",
+    "endpoint_class": "local",
+    "endpoint": "http://127.0.0.1:8000/v1",
+    "identifier": "BAAI/bge-small-en-v1.5",
+    "reported_dimension": 384,
+    "normalization": "none"
+  },
+  "target": {
+    "schema": "public",
+    "table": "memories",
+    "column": "embedding_v2",
+    "representation": "vector",
+    "metric": "cosine",
+    "index_method": "hnsw"
+  },
+  "consistency": { "mode": "outbox" },
+  "policy": {
+    "require_exact_approval": true,
+    "require_consistency_mode": true,
+    "min_source_rows": 1
+  }
+}

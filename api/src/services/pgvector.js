@@ -8,6 +8,15 @@ import pg from 'pg';
 import { getEmbeddingDimensions } from './embedders/interface.js';
 
 const POSTGRES_URL = process.env.POSTGRES_URL;
+// Select the prepared column together with its matching encoder at deployment.
+// The default keeps the existing storage path; Ptah owns candidate indexes.
+export function embeddingColumn(value = 'vector') {
+  if (!/^(vector|embedding_[a-z0-9_]+)$/.test(value) || value.length > 63) {
+    throw new Error('PGVECTOR_COLUMN must be vector or embedding_<lowercase identifier> (at most 63 characters)');
+  }
+  return value;
+}
+const VECTOR_COLUMN = embeddingColumn(process.env.PGVECTOR_COLUMN);
 
 // Effective-confidence decay applied on read to fact- and status-type memories.
 const DECAY_FACTOR = parseFloat(process.env.DECAY_FACTOR) || 0.98;
@@ -66,11 +75,12 @@ export function halfvecMode(dims) {
 // SQL distance expression for the active vector mode. In halfvec mode both the
 // stored column and the query param are cast to halfvec(dims) so the operator
 // matches the halfvec HNSW index.
-export function vectorDistanceExpr(mode, dims, param = '$1') {
+export function vectorDistanceExpr(mode, dims, param = '$1', column = 'vector') {
+  column = embeddingColumn(column);
   if (mode === 'halfvec') {
-    return `(vector::halfvec(${dims})) <=> ${param}::halfvec(${dims})`;
+    return `(${column}::halfvec(${dims})) <=> ${param}::halfvec(${dims})`;
   }
-  return `vector <=> ${param}::vector`;
+  return `${column} <=> ${param}::vector`;
 }
 
 // Startup dims-guard decision: does the existing vector column's declared
@@ -108,7 +118,7 @@ export async function initPgvector() {
   const pgvectorVersion = parseVectorVersion(verRes.rows[0]?.extversion);
   iterativeScanSupported = supportsIterativeScan(pgvectorVersion);
 
-  await pool.query(`
+  if (VECTOR_COLUMN === 'vector') await pool.query(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
       vector vector(${dims}),
@@ -134,13 +144,17 @@ export async function initPgvector() {
   // declared dimension than the provider now reports, every write would fail
   // with an opaque dimension-mismatch. Fail fast at startup with a fix instead.
   const colRes = await pool.query(
-    `SELECT atttypmod FROM pg_attribute
-       WHERE attrelid = 'memories'::regclass AND attname = 'vector'`
+    `SELECT atttypmod, atttypid = 'vector'::regtype AS is_vector FROM pg_attribute
+       WHERE attrelid = 'memories'::regclass AND attname = $1 AND NOT attisdropped`,
+    [VECTOR_COLUMN]
   );
+  if (!colRes.rows[0]?.is_vector) {
+    throw new Error(`Prepare memories.${VECTOR_COLUMN} as a vector column before starting the API`);
+  }
   const atttypmod = colRes.rows[0]?.atttypmod;
   if (dimsGuardShouldExit(atttypmod, dims)) {
     throw new Error(
-      `[pgvector] FATAL: existing 'memories.vector' column is vector(${atttypmod}) but the ` +
+      `[pgvector] FATAL: existing 'memories.${VECTOR_COLUMN}' column is vector(${atttypmod}) but the ` +
       `embedding provider reports ${dims} dims. Fix the mismatch: set the provider's dims env ` +
       `(e.g. GEMINI_EMBEDDING_DIMS/OPENAI_EMBEDDING_DIMS) back to ${atttypmod}, or re-embed the ` +
       `corpus into a fresh column at ${dims} dims. Refusing to start with a column that would ` +
@@ -151,9 +165,10 @@ export async function initPgvector() {
   // Indexes — HNSW for vector ANN, btree for hot-path filters, GIN for JSONB entity filter.
   // HNSW creation is idempotent via IF NOT EXISTS but takes a moment on first create.
   // >2000 dims exceeds the `vector`-type HNSW cap, so index the halfvec cast instead.
-  if (vectorMode === 'halfvec') {
+  // Ptah builds and verifies candidate indexes before deployment.
+  if (VECTOR_COLUMN === 'vector' && vectorMode === 'halfvec') {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_vector_hnsw ON memories USING hnsw ((vector::halfvec(${dims})) halfvec_cosine_ops)`);
-  } else {
+  } else if (VECTOR_COLUMN === 'vector') {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_vector_hnsw ON memories USING hnsw (vector vector_cosine_ops)`);
   }
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type) WHERE active = true`);
@@ -170,7 +185,7 @@ export async function initPgvector() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_collection ON memories(collection)`);
 
   console.log(
-    `[pgvector] Table 'memories' ready (vector dims: ${dims}, mode: ${vectorMode}, ` +
+    `[pgvector] Table 'memories' ready (column: ${VECTOR_COLUMN}, vector dims: ${dims}, mode: ${vectorMode}, ` +
     `pgvector: ${verRes.rows[0]?.extversion || 'unknown'}, iterative_scan: ${iterativeScanSupported ? 'relaxed_order' : 'off'})`
   );
 }
@@ -209,14 +224,14 @@ export async function upsertPoint(id, vector, payload, collection) {
   const vecLit = toVectorLiteral(vector);
   await pool.query(`
     INSERT INTO memories (
-      id, vector, type, source_agent, client_id, content_hash,
+      id, ${VECTOR_COLUMN}, type, source_agent, client_id, content_hash,
       key, subject, active, consolidated, importance, confidence,
       access_count, created_at, last_accessed_at, payload, collection
     ) VALUES (
       $1, $2::vector, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
     )
     ON CONFLICT (id) DO UPDATE SET
-      vector = EXCLUDED.vector,
+      ${VECTOR_COLUMN} = EXCLUDED.${VECTOR_COLUMN},
       type = EXCLUDED.type,
       source_agent = EXCLUDED.source_agent,
       client_id = EXCLUDED.client_id,
@@ -288,14 +303,14 @@ export async function supersedeAndInsert(keyField, keyValue, newId, vector, payl
     const storedPayload = { ...payload, supersedes: supersededId };
     await client.query(
       `INSERT INTO memories (
-        id, vector, type, source_agent, client_id, content_hash,
+        id, ${VECTOR_COLUMN}, type, source_agent, client_id, content_hash,
         key, subject, active, consolidated, importance, confidence,
         access_count, created_at, last_accessed_at, payload, collection
       ) VALUES (
         $1, $2::vector, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
       )
       ON CONFLICT (id) DO UPDATE SET
-        vector = EXCLUDED.vector,
+        ${VECTOR_COLUMN} = EXCLUDED.${VECTOR_COLUMN},
         payload = EXCLUDED.payload,
         active = EXCLUDED.active`,
       [
@@ -380,7 +395,7 @@ export async function searchPoints(vector, filter = {}, limit = 10, nestedFilter
   // pgvector '<=>' is cosine distance (0 = identical, 2 = opposite). We map it to
   // a [0,1] similarity: score = 1 - distance/2, which is exactly 0.5 + cosine_sim/2.
   // SEARCH_SCORE_FLOOR (default 0.55 ≈ cosine 0.1) drops near-orthogonal matches.
-  const distExpr = vectorDistanceExpr(vectorMode, vectorDims);
+  const distExpr = vectorDistanceExpr(vectorMode, vectorDims, '$1', VECTOR_COLUMN);
   const scoreExpr = `1 - (${distExpr}) / 2`;
   const sql = `
     SELECT id, payload, ${scoreExpr} AS score

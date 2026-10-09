@@ -58,3 +58,39 @@ jobs:
           timeout 5 node src/index.js 2>&1 | head -1 || test $? -eq 124
         env:
           BRAIN_API_KEY: test-key
+
+  embedding-generation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: zengram_test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zengram_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: api
+      - name: Install Ptah 0.11.4
+        run: |
+          curl --fail --location --retry 3 https://github.com/stokaro/ptah/releases/download/v0.11.4/ptah_0.11.4_linux_amd64.tar.gz -o "$RUNNER_TEMP/ptah.tar.gz"
+          echo "de0f2d49570ed57545b50b6d4de83e5891847a79921d0ecef262467bdb38a53b  $RUNNER_TEMP/ptah.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/ptah-bin"
+          tar -xzf "$RUNNER_TEMP/ptah.tar.gz" -C "$RUNNER_TEMP/ptah-bin" ptah LICENSE
+          echo "$RUNNER_TEMP/ptah-bin" >> "$GITHUB_PATH"
+      - name: Verify embedding generation handover
+        working-directory: api
+        run: node scripts/ptah/verify.js
+        env:
+          POSTGRES_URL: postgres://postgres:test@localhost:5432/zengram_test?sslmode=disable
