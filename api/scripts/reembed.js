@@ -25,6 +25,10 @@ import pg from 'pg';
 import { initEmbeddings, embed, getEmbeddingDimensions } from '../src/services/embedders/interface.js';
 import { errorSummary } from '../src/lib/log.js';
 
+if (process.env.PGVECTOR_COLUMN && process.env.PGVECTOR_COLUMN !== 'vector') {
+  throw new Error('reembed.js only manages the legacy vector column. Use the Ptah generation workflow for PGVECTOR_COLUMN.');
+}
+
 const COMMIT = process.argv.includes('--commit');
 const argVal = (name, dflt) => {
   const i = process.argv.indexOf(name);
