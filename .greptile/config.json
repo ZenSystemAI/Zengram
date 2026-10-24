@@ -22,7 +22,7 @@
   "triggerOnUpdates": false,
   "statusCheck": true,
   "fileChangeLimit": 100,
-  "ignorePatterns": "**/package-lock.json\n**/pnpm-lock.yaml\ndist/**\n.next/**\nnode_modules/**",
+  "ignorePatterns": "**/package-lock.json\n**/pnpm-lock.yaml\n**/dist/**\n**/.next/**\n**/node_modules/**",
   "shouldUpdateDescription": false,
   "autoApprove": {
     "enabled": false

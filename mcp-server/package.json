@@ -50,6 +50,6 @@
   },
   "overrides": {
     "@hono/node-server": "2.1.4",
-    "body-parser": "2.3.0"
+    "body-parser": "2.4.0"
   }
 }
