@@ -183,7 +183,7 @@ Copy [`adapters/claude-code/sessionend/`](adapters/claude-code/sessionend/) to y
 
 ## Roadmap
 
-**Recently shipped**: cross-encoder reranking stage, entity-graph retrieval path, weighted RRF, self-hosted encoder support (local endpoints + instruction prefixes + in-place re-embed), agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity — [full changelog](CHANGELOG.md)
+**Recently shipped**: cross-encoder reranking stage, entity-graph retrieval path, weighted RRF, self-hosted encoder support (local endpoints + instruction prefixes + staged re-embed), agentic iterate-until-sufficient retrieval (`brain_research`) with grounded `[mem:<id>]` citations, pgvector migration (single-Postgres storage), multi-collection support, on-demand LLM reflection, temporal validity — [full changelog](CHANGELOG.md)
 
 **Coming next**: Automatic memory capture, hosted docs, LangChain/LlamaIndex integration
 

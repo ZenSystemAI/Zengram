@@ -43,6 +43,7 @@ Vectors live in Postgres via the `pgvector` extension (HNSW index) — there is 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EMBEDDING_PROVIDER` | `openai` | Provider: `openai`, `gemini`, `ollama` |
+| `EMBEDDING_GENERATION` | (derived) | Optional. Overrides the embedding generation id the staged re-embed records (derived by default from provider, model, dims, prefix fingerprints and normalization). Set a new value to force a fresh stage under an unchanged configuration. See [Switching Embedding Models](operations.md#switching-embedding-models-staged-re-embed) |
 
 ### OpenAI Embeddings
 

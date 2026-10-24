@@ -179,7 +179,7 @@ curl -X POST -H "x-api-key: KEY" \
 # Response: {"imported": 342, "skipped": 158, "errors": 0}
 ```
 
-Import re-embeds with the current provider, so switching embedding providers is safe -- just export and reimport.
+Import re-embeds with the current provider, so export and reimport is one way to switch embedding providers. For an existing deployment, the staged re-embed below switches in place without taking search down.
 
 ### Postgres Data Directory
 
@@ -194,6 +194,41 @@ For a logical dump instead:
 ```bash
 docker exec zengram-postgres pg_dump -U brain shared_brain > brain-$(date +%Y%m%d).sql
 ```
+
+## Switching Embedding Models (Staged Re-embed)
+
+`api/scripts/reembed.js` moves the corpus to a new embedding provider, model, dimensionality or instruction prefix. It builds the replacement vectors in a separate `memories.vector_next` column, so the active `vector` column and its HNSW index keep serving search until a single cutover transaction. Staging never nulls or overwrites the active column.
+
+Run it with the same `POSTGRES_URL` the API uses and the **target** embedding env (`EMBEDDING_PROVIDER` and that provider's model, dims and prefix variables). Inside the API container the script is at `/app/scripts/reembed.js`; pass the target env with `docker exec -e NAME=value ...`. Take a database snapshot first (see above).
+
+```bash
+# 1. Preview (default; no writes)
+node api/scripts/reembed.js
+
+# 2. Stage: embed every memory with text into vector_next and record the target
+#    provenance. Resumable: rows already staged for the same generation and
+#    content_hash are skipped, so rerun it after failures or to catch up on
+#    memories written meanwhile.
+node api/scripts/reembed.js --stage --apply
+
+# 3. Preview the cutover: reports coverage and whether activation would be refused
+node api/scripts/reembed.js --activate
+
+# 4. Stop writers (or the API), run step 2 once more to catch up, then cut over
+node api/scripts/reembed.js --activate --apply
+
+# 5. Restart the API with the target embedding env
+```
+
+Activation runs in one transaction under an advisory lock and an `ACCESS EXCLUSIVE` lock on `memories`. It refuses, and rolls back without touching the active vectors, when:
+- any memory with text has no staged vector, was staged under another generation, or was edited after staging (its `content_hash` changed);
+- a memory has an active vector but no embeddable text (a dimension change would leave it without a vector);
+- the recorded target provenance does not match the current embedding env (provider, model, dimensions, prefix fingerprints, normalization);
+- `--limit` or `--collection` is passed (partial cutover is unsafe; both are allowed for staging tests).
+
+On success it copies the current vectors into `vector_prev`, promotes `vector_next` into `vector` (re-typing the column when the dimensionality changes), drops `vector_next`, and rebuilds `idx_memories_vector_hnsw`: a plain `vector` index up to 2000 dims, a `halfvec` cast index above that. Restart the API with the target env straight away: until then it embeds queries with the old model. After a dimensionality change, the startup dims guard refuses to start the API under the old env.
+
+Every run ends with a `[reembed-summary]` JSON line and exits nonzero on stage failures or a refused activation. Migration provenance is kept in `zengram_meta` (`embedding_migration_target`, `embedding_migration_previous`); instruction prefixes are stored as fingerprints only. `vector_prev` is a one-generation snapshot for manual rollback: the next activation replaces it, and once you no longer need it, `ALTER TABLE memories DROP COLUMN vector_prev;` reclaims the space. To force a fresh stage under an unchanged configuration (for example after a provider updates a model in place), set `EMBEDDING_GENERATION` to a new value for both stage and activate.
 
 ## Restart Procedures
 
@@ -259,6 +294,7 @@ All log lines use bracketed prefixes for grep-friendly filtering:
 | `[keyword-search]` | Keyword (full-text) search |
 | `[collections]` | Multi-collection management |
 | `[reflect]` | LLM reflection |
+| `[reembed]` / `[reembed-summary]` | Staged re-embed script (`api/scripts/reembed.js`) |
 
 ## Cross-References
 

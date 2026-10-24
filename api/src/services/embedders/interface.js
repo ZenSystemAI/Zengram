@@ -1,4 +1,7 @@
 // Embedding provider interface
+import crypto from 'node:crypto';
+import { embeddingDimensions } from './dimensions.js';
+
 // Each provider must implement: embed(text, purpose?) → number[], getDimensions() → number
 // purpose: 'store' | 'search' — providers that support task-specific embeddings (e.g. Gemini) use this
 
@@ -76,4 +79,76 @@ export async function embed(text, purpose) {
 export function getEmbeddingDimensions() {
   if (!provider) throw new Error('Embedding provider not initialized.');
   return provider.getDimensions();
+}
+
+function sha256Hex(value, length = 16) {
+  return crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex').slice(0, length);
+}
+
+// Same env and defaults the provider classes read (openai.js, gemini.js, ollama.js).
+function resolveEmbeddingModel(providerName) {
+  if (providerName === 'gemini') return process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2-preview';
+  if (providerName === 'ollama') return process.env.OLLAMA_MODEL || 'nomic-embed-text';
+  return process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+}
+
+// Configured dims before init. OpenAI without OPENAI_EMBEDDING_DIMS and Ollama
+// probe their native size at init, so they are unknown (null) until then.
+function resolveConfiguredDimensions(providerName) {
+  if (providerName === 'gemini') return embeddingDimensions('GEMINI_EMBEDDING_DIMS', 1536);
+  if (providerName === 'openai') return embeddingDimensions('OPENAI_EMBEDDING_DIMS', null);
+  return null;
+}
+
+function resolveNormalizationMode(providerName, dimensions) {
+  // gemini.js L2-renormalizes Matryoshka-truncated outputs below native 3072.
+  if (providerName === 'gemini') {
+    if (dimensions != null && Number(dimensions) < 3072) return 'l2';
+    return 'provider';
+  }
+  return 'none';
+}
+
+// JSON-serializable identity of the configured embedding space, used by
+// scripts/reembed.js to tag staged vectors and to refuse activating vectors
+// built under a different provider, model, dims, prefix or normalization.
+// Prefixes are recorded as fingerprints only, never as raw instruction text.
+// EMBEDDING_GENERATION overrides the derived generation id (for example to
+// force a fresh stage after a provider-side model update under the same name).
+export function getEmbeddingProvenance({
+  providerName = PROVIDER,
+  dimensions = provider?.getDimensions?.() ?? resolveConfiguredDimensions(String(PROVIDER).toLowerCase()),
+  queryPrefix = QUERY_PREFIX,
+  documentPrefix = DOC_PREFIX,
+  generationOverride = process.env.EMBEDDING_GENERATION,
+} = {}) {
+  const providerNorm = String(providerName || PROVIDER || '').toLowerCase();
+  const model = resolveEmbeddingModel(providerNorm);
+  const dims = dimensions == null ? null : Number(dimensions);
+  const query_prefix_fp = sha256Hex(queryPrefix || '');
+  const document_prefix_fp = sha256Hex(documentPrefix || '');
+  const normalization = resolveNormalizationMode(providerNorm, dims);
+
+  const explicitGeneration = generationOverride != null && String(generationOverride).trim() !== ''
+    ? String(generationOverride).trim()
+    : null;
+
+  const generation = explicitGeneration || sha256Hex([
+    providerNorm,
+    model,
+    dims == null ? '' : String(dims),
+    query_prefix_fp,
+    document_prefix_fp,
+    normalization,
+  ].join('|'));
+
+  return {
+    generation,
+    provider: providerNorm,
+    model,
+    dimensions: Number.isFinite(dims) ? dims : null,
+    query_prefix_fp,
+    document_prefix_fp,
+    normalization,
+  };
 }

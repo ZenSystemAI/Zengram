@@ -4,6 +4,12 @@ This changelog covers the entire Zengram project (API, MCP server, adapters, and
 
 This root file is the canonical changelog for the project. The `mcp-server/CHANGELOG.md` tracks only the published `@zensystemai/zengram-mcp` package history.
 
+## Unreleased
+
+### Changed
+- **Staged re-embed (`api/scripts/reembed.js`).** Switching embedding models no longer takes search down. The script used to clear the active `vector` column before re-embedding when the dimensionality changed, so vector search returned nothing until the backfill finished (raised in #51). It now embeds into a separate `vector_next` column while the active column keeps serving: `--stage --apply` builds and resumes the replacement, tagged with the embedding generation and each row's `content_hash`; `--activate --apply` checks full coverage and the recorded provenance under an advisory lock and a table lock, keeps the previous vectors in `vector_prev`, promotes the new ones in one transaction, and rebuilds the HNSW index (`halfvec` above 2000 dims). Activation refuses partial coverage, rows edited after staging, rows with a vector but no text, a provenance mismatch, and `--limit`/`--collection`. Every run prints a machine-readable `[reembed-summary]` line. **Behaviour change:** `--commit` now means `--stage --apply`; run `--activate --apply` afterwards to cut over. See [Switching Embedding Models](docs/operations.md#switching-embedding-models-staged-re-embed).
+- `getEmbeddingProvenance()` in the embedder interface describes the configured embedding space (provider, model, dims, prefix fingerprints, normalization); optional `EMBEDDING_GENERATION` overrides the derived generation id.
+
 ## 4.5.0 (2026-07-03)
 
 Retrieval-stack release. Adds the three biggest precision/recall levers from our production deployment — a cross-encoder reranker stage, weighted RRF, and an entity-graph retrieval path — plus first-class self-hosted model support (local embedding endpoints, instruction prefixes, reasoning-model compatibility). Everything is gated and defaults to current behavior: with no new env vars set, search results are byte-identical to 4.4.0.
