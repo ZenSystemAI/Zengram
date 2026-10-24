@@ -10,9 +10,12 @@ import {
 } from '../src/services/embedders/interface.js';
 import {
   MigrationRefusedError,
+  META_KEY_PENDING_PREVIOUS,
+  META_KEY_PREVIOUS,
   META_TABLE,
   assertActivationScope,
   assertNoActiveVectorWipe,
+  assertStageTargetCompatible,
   assertTargetMetaMatchesProvenance,
   buildActiveIndexSql,
   buildActivationSql,
@@ -27,6 +30,7 @@ import {
   buildStageUpdateSql,
   buildStageSelectSql,
   halfvecMode,
+  hasEmbeddableText,
   isCurrentStagedRow,
   migrationSummary,
   parseCliArgs,
@@ -38,6 +42,7 @@ import { halfvecMode as pgvectorHalfvecMode } from '../src/services/pgvector.js'
 import {
   closeReembedResources,
   currentColumnDims,
+  deleteMeta,
   describeError,
   readMeta,
   writeMeta,
@@ -189,6 +194,36 @@ describe('reembed CLI stage vs activate safety', () => {
     assert.equal(stageOk.ok, true);
   });
 
+  it('refuses activation when --limit or --collection is supplied at all, even malformed', () => {
+    const badLimit = parseCliArgs(['--activate', '--apply', '--limit', 'nope']);
+    assert.equal(badLimit.limitSupplied, true);
+    assert.equal(badLimit.limit, 0);
+    assert.match(badLimit.errors.join(';'), /--limit needs a non-negative integer/);
+    assert.equal(assertActivationScope(badLimit).ok, false);
+
+    const zeroLimit = parseCliArgs(['--activate', '--apply', '--limit', '0']);
+    assert.deepEqual(zeroLimit.errors, []);
+    assert.match(assertActivationScope(zeroLimit).error, /--limit/);
+
+    const bareCollection = parseCliArgs(['--activate', '--apply', '--collection']);
+    assert.equal(bareCollection.collectionSupplied, true);
+    assert.equal(bareCollection.collection, null);
+    assert.match(bareCollection.errors.join(';'), /--collection needs a collection name/);
+    assert.match(assertActivationScope(bareCollection).error, /--collection/);
+
+    const emptyCollection = parseCliArgs(['--activate', '--apply', '--collection=']);
+    assert.equal(emptyCollection.collectionSupplied, true);
+    assert.equal(assertActivationScope(emptyCollection).ok, false);
+
+    const clean = parseCliArgs(['--activate', '--apply']);
+    assert.deepEqual(clean.errors, []);
+    assert.equal(assertActivationScope(clean).ok, true);
+
+    const stage = parseCliArgs(['--stage', '--apply', '--limit', '5', '--collection', 'c1']);
+    assert.deepEqual(stage.errors, []);
+    assert.equal(assertActivationScope(stage).ok, true);
+  });
+
   it('builds a first-run dry-run select without migration columns', () => {
     const preview = buildStageSelectSql({
       collection: 'tenant-a',
@@ -221,6 +256,24 @@ describe('resumable vector staging', () => {
     assert.equal(isCurrentStagedRow({ ...current, stage_generation: 'old' }, 'bge-generation'), false);
     assert.equal(isCurrentStagedRow({ ...current, content_hash: 'sha256:edited' }, 'bge-generation'), false);
     assert.equal(isCurrentStagedRow(current, ''), false);
+  });
+});
+
+describe('embeddable text rule', () => {
+  it('matches the coverage SQL: first non-empty field, whitespace-only text included', () => {
+    assert.equal(hasEmbeddableText({ text: 'hello' }), true);
+    assert.equal(hasEmbeddableText({ text: '   ' }), true);
+    assert.equal(hasEmbeddableText({ text: '\t\n' }), true);
+    assert.equal(hasEmbeddableText({ text: '', content: 'fallback' }), true);
+    assert.equal(hasEmbeddableText({ title: 'only a title' }), true);
+    assert.equal(hasEmbeddableText({ text: '' }), false);
+    assert.equal(hasEmbeddableText({}), false);
+    assert.equal(hasEmbeddableText(null), false);
+
+    // The SQL side selects with NULLIF(field, '') and never trims.
+    const { sql } = buildCoverageSql({ generation: 'g' });
+    assert.match(sql, /NULLIF\(payload->>'text',''\)/);
+    assert.doesNotMatch(sql, /trim\(/i);
   });
 });
 
@@ -310,6 +363,42 @@ describe('target meta vs provenance', () => {
     const badModel = assertTargetMetaMatchesProvenance({ ...provenance, model: 'other-model' }, provenance);
     assert.equal(badModel.ok, false);
     assert.ok(badModel.mismatches.includes('model'));
+  });
+});
+
+describe('stage target compatibility', () => {
+  const identity = {
+    generation: 'pinned-gen',
+    provider: 'openai',
+    model: 'model-a',
+    dimensions: 1024,
+    query_prefix_fp: 'aaa',
+    document_prefix_fp: 'bbb',
+    normalization: 'none',
+  };
+
+  it('refuses to reuse a pinned generation staged under another identity', () => {
+    const staged = { ...identity, status: 'staging', staged_at: 'x' };
+    const result = assertStageTargetCompatible(staged, { ...identity, model: 'model-b' });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.mismatches, ['model']);
+    assert.match(result.error, /already staged under a different embedding identity \(model\)/);
+    assert.match(result.error, /EMBEDDING_GENERATION/);
+  });
+
+  it('allows resuming the same identity, a new generation, or a fresh start', () => {
+    const staged = { ...identity, status: 'staging' };
+    assert.equal(assertStageTargetCompatible(staged, identity).ok, true);
+    assert.equal(
+      assertStageTargetCompatible(staged, { ...identity, generation: 'new-gen', model: 'model-b' }).ok,
+      true,
+    );
+    // After activation the stage column is dropped, so nothing can be reused.
+    assert.equal(
+      assertStageTargetCompatible({ ...identity, status: 'active' }, { ...identity, model: 'model-b' }).ok,
+      true,
+    );
+    assert.equal(assertStageTargetCompatible(null, identity).ok, true);
   });
 });
 
@@ -505,6 +594,20 @@ describe('reembed column dimension lookup', () => {
       },
     };
     await assert.rejects(readMeta(broken, 'embedding_migration_target'), /connection reset/);
+  });
+
+  it('keeps vector_prev metadata and the pending capture under separate keys', async () => {
+    assert.notEqual(META_KEY_PENDING_PREVIOUS, META_KEY_PREVIOUS);
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql: String(sql), params });
+        return { rows: [] };
+      },
+    };
+    await deleteMeta(pool, META_KEY_PENDING_PREVIOUS);
+    assert.match(queries[0].sql, /^DELETE FROM zengram_meta WHERE key = \$1$/);
+    assert.deepEqual(queries[0].params, ['embedding_migration_pending_previous']);
   });
 
   it('rejects malformed migration metadata instead of treating it as absent', async () => {

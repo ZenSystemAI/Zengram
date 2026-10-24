@@ -23,7 +23,11 @@ export const PREV_COLUMN = 'vector_prev';
 // already keeps (stores/postgres.js), as JSON text.
 export const META_TABLE = 'zengram_meta';
 export const META_KEY_TARGET = 'embedding_migration_target';
+// Identity of the vectors currently in vector_prev; written only by activation.
 export const META_KEY_PREVIOUS = 'embedding_migration_previous';
+// Identity of the active vectors, captured when staging starts; it becomes
+// META_KEY_PREVIOUS only when activation copies those vectors into vector_prev.
+export const META_KEY_PENDING_PREVIOUS = 'embedding_migration_pending_previous';
 export const ADVISORY_LOCK_KEY1 = 0x5a47524d; // 'ZGRM'
 export const ADVISORY_LOCK_KEY2 = 0x4d494752; // 'MIGR'
 
@@ -38,7 +42,9 @@ export class MigrationRefusedError extends Error {
   }
 }
 
-// Embeddable-text predicate shared by coverage SQL (payload text fields).
+// Embeddable text: the first non-empty payload text field (text, content, note,
+// title). hasEmbeddableText() applies the same rule to rows read by the CLI.
+// Whitespace-only text counts, because the API accepts and embeds it as stored.
 const EMBEDDABLE_TEXT_SQL = `COALESCE(NULLIF(payload->>'text',''), NULLIF(payload->>'content',''), NULLIF(payload->>'note',''), NULLIF(payload->>'title','')) IS NOT NULL`;
 
 export function parseCliArgs(argv = process.argv.slice(2)) {
@@ -89,6 +95,16 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     // explicit mode without --apply → still dry (preview that mode)
   }
 
+  // Malformed scope values are errors, never silent defaults: a dropped
+  // --limit or --collection would otherwise turn a scoped run into a full one.
+  const errors = [];
+  if (has('limit') && !/^\d+$/.test(String(values.limit))) {
+    errors.push('--limit needs a non-negative integer');
+  }
+  if (has('collection') && (values.collection === true || String(values.collection).trim() === '')) {
+    errors.push('--collection needs a collection name');
+  }
+
   const concurrency = Math.max(1, intOr('concurrency', 4));
   const limit = Math.max(0, intOr('limit', 0));
   const collection = (values.collection && values.collection !== true)
@@ -101,20 +117,33 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     concurrency,
     limit,
     collection,
+    limitSupplied: has('limit'),
+    collectionSupplied: has('collection'),
+    errors,
     raw: { flags: [...flags], values },
   };
 }
 
 // Activation must cover the full corpus of rows that have embeddable text.
-// Scoped --limit / --collection are fine for stage previews, never for cutover.
-/** @param {{ limit?: number, collection?: string|null, mode?: string }} [opts] */
-export function assertActivationScope({ limit = 0, collection = null, mode } = {}) {
+// Scoped --limit / --collection are fine for stage previews, never for cutover;
+// supplying either flag at all (even malformed or empty) refuses activation.
+/**
+ * @param {{ limit?: number, collection?: string|null, mode?: string,
+ *   limitSupplied?: boolean, collectionSupplied?: boolean }} [opts]
+ */
+export function assertActivationScope({
+  limit = 0,
+  collection = null,
+  mode,
+  limitSupplied = false,
+  collectionSupplied = false,
+} = {}) {
   if (mode !== 'activate') return { ok: true };
   const problems = [];
-  if (limit && Number(limit) > 0) {
+  if (limitSupplied || (limit && Number(limit) > 0)) {
     problems.push('--limit is not allowed with --activate (partial cutover is unsafe)');
   }
-  if (collection) {
+  if (collectionSupplied || collection) {
     problems.push('--collection is not allowed with --activate (partial cutover is unsafe)');
   }
   if (problems.length) {
@@ -125,6 +154,12 @@ export function assertActivationScope({ limit = 0, collection = null, mode } = {
 
 export function textOf(payload) {
   return (payload && (payload.text || payload.content || payload.note || payload.title)) || '';
+}
+
+// Same rule as EMBEDDABLE_TEXT_SQL, so staging embeds exactly the rows that
+// coverage requires.
+export function hasEmbeddableText(payload) {
+  return String(textOf(payload)) !== '';
 }
 
 export function vecLiteral(arr) {
@@ -366,8 +401,32 @@ export function assertTargetMetaMatchesProvenance(meta, provenance) {
   return { ok: true };
 }
 
-// Preserve the currently active generation before META_KEY_TARGET is reused for
-// a staged target. If staging is resumed/switched, previousMeta remains the
+// Staged rows are reused when their generation and content_hash still match.
+// With EMBEDDING_GENERATION pinned, a provider/model/dims/prefix change keeps
+// the same generation, so vectors staged under the old identity would be reused
+// and later promoted under the new one. Refuse that before any write.
+export function assertStageTargetCompatible(targetMeta, provenance) {
+  if (!targetMeta || typeof targetMeta !== 'object' || targetMeta.status !== 'staging') {
+    return { ok: true };
+  }
+  if (String(targetMeta.generation ?? '') !== String(provenance?.generation ?? '')) {
+    return { ok: true };
+  }
+  const match = assertTargetMetaMatchesProvenance(targetMeta, provenance);
+  if (match.ok) return { ok: true };
+  return {
+    ok: false,
+    error: (
+      `generation ${provenance.generation} is already staged under a different embedding identity ` +
+      `(${(match.mismatches || []).join(', ') || match.error}); set a new EMBEDDING_GENERATION to restage`
+    ),
+    mismatches: match.mismatches || [],
+  };
+}
+
+// Capture the currently active generation before META_KEY_TARGET is reused for
+// a staged target (stored under META_KEY_PENDING_PREVIOUS until activation). If
+// staging is resumed/switched, previousMeta (the pending capture) remains the
 // source of truth; a target whose status is "staging" is never mislabeled active.
 /**
  * @param {{ activeMeta?: Record<string, any>|null, previousMeta?: Record<string, any>|null, retainedDims?: number,

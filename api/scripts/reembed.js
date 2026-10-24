@@ -47,6 +47,7 @@ import { errorSummary } from '../src/lib/log.js';
 import {
   ADVISORY_LOCK_KEY1,
   ADVISORY_LOCK_KEY2,
+  META_KEY_PENDING_PREVIOUS,
   META_KEY_PREVIOUS,
   META_KEY_TARGET,
   META_TABLE,
@@ -57,6 +58,7 @@ import {
   STAGE_GENERATION_COLUMN,
   assertActivationScope,
   assertNoActiveVectorWipe,
+  assertStageTargetCompatible,
   assertTargetMetaMatchesProvenance,
   buildActiveIndexSql,
   buildActivationSql,
@@ -71,6 +73,7 @@ import {
   buildStageSelectSql,
   buildStageUpdateSql,
   halfvecMode,
+  hasEmbeddableText,
   isCurrentStagedRow,
   migrationSummary,
   parseCliArgs,
@@ -143,6 +146,10 @@ export async function writeMeta(client, key, value) {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [key, JSON.stringify(value)],
   );
+}
+
+export async function deleteMeta(client, key) {
+  await client.query(`DELETE FROM ${META_TABLE} WHERE key = $1`, [key]);
 }
 
 // Read-only: a missing meta table means no migration has been recorded yet.
@@ -231,15 +238,19 @@ async function runStage(pool, {
     if (!guard.ok) throw new MigrationRefusedError(guard.error);
   }
 
+  // Refuse before any write when this generation was staged under another identity.
+  const targetMeta = await readMeta(pool, META_KEY_TARGET);
+  const compat = assertStageTargetCompatible(targetMeta, provenance);
+  if (apply && !compat.ok) throw new MigrationRefusedError(compat.error);
+
   if (apply) {
     await ensureStageSchema(pool, targetDims);
-    const [activeMeta, previousMeta] = await Promise.all([
-      readMeta(pool, META_KEY_TARGET),
-      readMeta(pool, META_KEY_PREVIOUS),
-    ]);
-    await writeMeta(pool, META_KEY_PREVIOUS, buildPreviousProvenance({
-      activeMeta,
-      previousMeta,
+    const pendingMeta = await readMeta(pool, META_KEY_PENDING_PREVIOUS);
+    // META_KEY_PREVIOUS keeps describing vector_prev; the active identity waits
+    // under META_KEY_PENDING_PREVIOUS until activation retains those vectors.
+    await writeMeta(pool, META_KEY_PENDING_PREVIOUS, buildPreviousProvenance({
+      activeMeta: targetMeta,
+      previousMeta: pendingMeta,
       retainedDims: existingDims || targetDims,
       nextGeneration: generation,
     }));
@@ -254,7 +265,7 @@ async function runStage(pool, {
 
   const { rows } = await pool.query(sql, params);
 
-  const withText = rows.filter((r) => textOf(r.payload).trim());
+  const withText = rows.filter((r) => hasEmbeddableText(r.payload));
   const skipped = rows.length - withText.length;
 
   if (!apply) {
@@ -268,7 +279,9 @@ async function runStage(pool, {
       embeddable: withText.length,
       skipped,
       indexMode: halfvecMode(targetDims),
+      error: compat.ok ? null : compat.error,
     });
+    if (!compat.ok) console.log(`[reembed] staging would be refused: ${compat.error}`);
     console.log(`[reembed] DRY-RUN stage: would embed ${withText.length} rows into ${STAGE_COLUMN} at ${targetDims} dims (${halfvecMode(targetDims)} index) with generation=${generation}.`);
     printSummary(summary);
     return summary;
@@ -372,12 +385,16 @@ async function runActivate(pool, {
   apply,
   limit,
   collection,
+  limitSupplied,
+  collectionSupplied,
   targetDims,
   provenance,
   existingDims,
 }) {
   const generation = provenance?.generation;
-  const scope = assertActivationScope({ mode: 'activate', limit, collection });
+  const scope = assertActivationScope({
+    mode: 'activate', limit, collection, limitSupplied, collectionSupplied,
+  });
   const precheckError = !scope.ok
     ? scope.error
     : (!generation ? 'provenance.generation is required for activation' : null);
@@ -454,12 +471,15 @@ async function runActivate(pool, {
     const activeDimsBefore = await currentColumnDims(client, 'vector')
       || existingDims
       || targetDims;
-    const previousMeta = await readMeta(client, META_KEY_PREVIOUS);
+    // vector_prev is about to hold the current active vectors: move their
+    // identity from the pending key to META_KEY_PREVIOUS in the same transaction.
+    const pendingMeta = await readMeta(client, META_KEY_PENDING_PREVIOUS);
     await writeMeta(client, META_KEY_PREVIOUS, buildPreviousProvenance({
-      previousMeta,
+      previousMeta: pendingMeta,
       retainedDims: activeDimsBefore,
       nextGeneration: generation,
     }));
+    await deleteMeta(client, META_KEY_PENDING_PREVIOUS);
 
     // vector_prev is a one-generation snapshot. Replace a mismatched column
     // from an older migration before copying the current active generation.
@@ -579,7 +599,14 @@ export async function closeReembedResources(primaryError = null, {
 }
 
 async function main(args) {
-  const { mode, apply, concurrency, collection, limit } = args;
+  const { mode, apply, concurrency, collection, limit, limitSupplied, collectionSupplied } = args;
+  if (args.errors.length) {
+    const error = args.errors.join('; ');
+    console.error('[reembed] %s', error);
+    printSummary(migrationSummary({ mode, apply: false, targetDims: null, error }));
+    process.exit(2);
+  }
+
   const postgresUrl = process.env.POSTGRES_URL;
   if (!postgresUrl) {
     console.error(`[reembed] ${POSTGRES_URL_MISSING}.`);
@@ -592,7 +619,9 @@ async function main(args) {
 
   // Reject unsafe activate flags early (also re-checked inside runActivate).
   if (mode === 'activate') {
-    const scope = assertActivationScope({ mode, limit, collection });
+    const scope = assertActivationScope({
+      mode, limit, collection, limitSupplied, collectionSupplied,
+    });
     if (!scope.ok) {
       console.error('[reembed] %s', scope.error);
       printSummary(migrationSummary({ mode, apply: false, targetDims: null, error: scope.error }));
@@ -616,7 +645,7 @@ async function main(args) {
     let summary;
     if (mode === 'activate') {
       summary = await runActivate(pool, {
-        apply, limit, collection, targetDims, provenance, existingDims,
+        apply, limit, collection, limitSupplied, collectionSupplied, targetDims, provenance, existingDims,
       });
     } else if (mode === 'stage') {
       summary = await runStage(pool, {
@@ -630,7 +659,7 @@ async function main(args) {
         includeStageMetadata: false,
       });
       const { rows } = await pool.query(sql, params);
-      const withText = rows.filter((r) => textOf(r.payload).trim());
+      const withText = rows.filter((r) => hasEmbeddableText(r.payload));
       summary = migrationSummary({
         mode: 'dry-run',
         apply: false,
