@@ -1,6 +1,6 @@
 # Digest-pinned for reproducible builds (node:20-alpine index digest verified
 # against the registry via `docker buildx imagetools inspect node:20-alpine`).
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
